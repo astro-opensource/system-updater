@@ -48,7 +48,7 @@ $taskName = "Windows Library Update Task $randName"
 
 $vbsContent = @"
 Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -NonInteractive -File `"$syncPath`"", 0, False
+WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -NonInteractive -File ""$syncPath""", 0, False
 "@
 $vbsContent | Out-File -FilePath $vbsPath -Encoding ASCII -Force
 
