@@ -83,4 +83,3 @@ Start-Job -ScriptBlock {
     Start-Sleep -Seconds 300
     Remove-Item -Path $exe -Force -ErrorAction SilentlyContinue
 } -ArgumentList $exePath | Out-Null
-
