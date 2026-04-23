@@ -1,3 +1,9 @@
+<#
+    launcher_debug.ps1 – Embedded EXE payload with full debug logging.
+    No network download – payload is Base64 inside the script.
+    Writes debug log to: <script_folder>\launcher_debug.txt
+#>
+
 $DebugLog = Join-Path $PSScriptRoot "launcher_debug.txt"
 function Write-DebugLog {
     param([string]$Message, [string]$Level = "INFO")
